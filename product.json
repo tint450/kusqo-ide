@@ -664,5 +664,27 @@
     "gruntfuggly.todo-tree": {
       "default": false
     }
-  }
+  },
+  "nameShort": "KUSQO",
+  "nameLong": "KUSQO IDE",
+  "applicationName": "kusqo-ide",
+  "dataFolderName": ".kusqo-ide",
+  "win32MutexName": "kusqoide",
+  "win32DirName": "KUSQO IDE",
+  "win32NameVersion": "KUSQO IDE",
+  "win32RegValueName": "KUSQOIDE",
+  "win32AppUserModelId": "Kusqo.KUSQOIDE",
+  "win32ShellNameShort": "KUSQO IDE",
+  "win32AppId": "{{B4A1F2E3-9C8D-4E5F-A6B7-C8D9E0F1A2B3}",
+  "darwinBundleIdentifier": "com.kusqo.ide",
+  "linuxIconName": "kusqo-ide",
+  "urlProtocol": "kusqo-ide",
+  "serverApplicationName": "kusqo-ide-server",
+  "serverDataFolderName": ".kusqo-ide-server",
+  "reportIssueUrl": "https://kusqo.com/support",
+  "licenseUrl": "https://kusqo.com/license",
+  "documentationUrl": "https://kusqo.com/docs",
+  "releaseNotesUrl": "https://kusqo.com/releases",
+  "supportUrl": "https://kusqo.com/support",
+  "webEndpointUrl": "https://kusqo.com/api"
 }

@@ -1,0 +1,105 @@
+{
+  "name": "kusqo-ide",
+  "displayName": "KUSQO IDE",
+  "description": "KUSQO agent IDE â€” chat, preview and local execution connected to your KUSQO workspace",
+  "version": "0.1.0",
+  "publisher": "kusqo",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kusqo.login",
+        "title": "KUSQO: Sign in"
+      },
+      {
+        "command": "kusqo.chat",
+        "title": "KUSQO: Open Agent Chat"
+      },
+      {
+        "command": "kusqo.logout",
+        "title": "KUSQO: Sign out"
+      },
+      {
+        "command": "kusqo.preview",
+        "title": "KUSQO: Open Preview"
+      },
+      {
+        "command": "kusqo.fixVerify",
+        "title": "KUSQO: Fix & Verify (local run)"
+      },
+      {
+        "command": "kusqo.agent",
+        "title": "KUSQO: Agent (plan & execute locally)"
+      },
+      {
+        "command": "kusqo.memoryRules",
+        "title": "KUSQO: Generate project memory rules (.kusqorules)"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "kusqo.fixVerify",
+          "group": "navigation"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kusqo",
+          "title": "KUSQO",
+          "icon": "$(rocket)"
+        }
+      ]
+    },
+    "views": {
+      "kusqo": [
+        {
+          "id": "kusqo.agentView",
+          "name": "Agent"
+        },
+        {
+          "id": "kusqo.sessionsView",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "KUSQO",
+      "properties": {
+        "kusqo.apiUrl": {
+          "type": "string",
+          "default": "https://api.kusqo.com",
+          "description": "KUSQO API base URL"
+        },
+        "kusqo.tenantSlug": {
+          "type": "string",
+          "default": "",
+          "description": "Workspace slug (empty = personal)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "watch": "tsc -watch -p tsconfig.json",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0",
+    "vsce": "^2.15.0"
+  }
+}
