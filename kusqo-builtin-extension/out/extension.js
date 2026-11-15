@@ -140,6 +140,9 @@ button:disabled{opacity:.4}
 #ac{display:none;margin:0 12px;background:#11111e;border:1px solid #26263a;border-radius:8px;max-height:180px;overflow-y:auto}
 #ac div{padding:5px 10px;font:11px monospace;color:#d4d4d8;cursor:pointer}
 #ac div:hover{background:#26263a}
+.starters{display:flex;flex-wrap:wrap;gap:8px;padding:6px 0}
+.starters button{background:#11111e;border:1px solid #26263a;color:#a5b4fc;font-weight:500;padding:8px 12px}
+.welcome{color:#a1a1aa;line-height:1.6}
 #attach{background:#0b0b14;border:1px solid #26263a;color:#a5b4fc;padding:10px 12px}`;
 /* eslint-disable no-useless-escape -- injected script text; the escapes are real regex in the child document */
 const JS = `const msgs=document.getElementById('msgs');const inp=document.getElementById('inp');
@@ -156,10 +159,13 @@ if(m.type==='stats'){const d=document.createElement('div');d.className='stats';d
 if(m.type==='delta'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='done'){const s=document.getElementById('stream');if(s)s.id='';add('a','Preview ready — click Open preview')}
 if(m.type==='chips')renderChips(m.items);
+if(m.type==='level'){lvl.textContent='Level: '+(m.level==='beginner'?'Beginner':'Developer')}
+if(m.type==='welcome')welcome(m.starters);
+if(m.type==='previewOffer'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.textContent='▶ Open preview';b.onclick=()=>vscode.postMessage({type:'openPreview',path:m.path});d.appendChild(b);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='mentions')showMentions(m.items);
 if(m.type==='review'){const d=document.createElement('div');d.className='review';const h=document.createElement('div');h.textContent='Review proposed changes ('+m.files.length+' files) — nothing is written until you apply';h.style.color='#a5b4fc';d.appendChild(h);m.files.forEach((f,i)=>{const r=document.createElement('label');r.className='rf';const c=document.createElement('input');c.type='checkbox';c.checked=f.status!=='same';c.dataset.i=String(i);r.appendChild(c);const t=document.createElement('span');t.textContent=(f.status==='new'?'✚ ':f.status==='same'?'= ':'✎ ')+f.path+'  +'+f.added+' −'+f.removed;r.appendChild(t);const v=document.createElement('a');v.textContent='diff';v.onclick=(e)=>{e.preventDefault();vscode.postMessage({type:'diff',index:i})};r.appendChild(v);d.appendChild(r)});const bar=document.createElement('div');bar.className='rbar';const ap=document.createElement('button');ap.textContent='Apply selected';ap.onclick=()=>{const idx=[...d.querySelectorAll('input')].filter((x)=>x.checked).map((x)=>Number(x.dataset.i));ap.disabled=true;ds.disabled=true;vscode.postMessage({type:'applyReview',indexes:idx})};const ds=document.createElement('button');ds.className='ghost';ds.textContent='Discard';ds.onclick=()=>{ap.disabled=true;ds.disabled=true;vscode.postMessage({type:'discardReview'})};bar.appendChild(ap);bar.appendChild(ds);d.appendChild(bar);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='revertOffer'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.className='ghost';b.textContent='↩ Revert applied files';b.onclick=()=>{b.disabled=true;vscode.postMessage({type:'revert'})};d.appendChild(b);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
-if(m.type==='replay'){msgs.innerHTML='';m.items.forEach((it)=>{if(it.role==='u')add('u',it.text);else if(it.role==='a')add('a',it.text);else{const d=document.createElement('div');d.className=it.role==='plan'?'plan':'stats';d.textContent=it.text;msgs.appendChild(d)}});msgs.scrollTop=msgs.scrollHeight}
+if(m.type==='replay'){msgs.innerHTML='';if(!m.items.length&&m.starters)welcome(m.starters);m.items.forEach((it)=>{if(it.role==='u')add('u',it.text);else if(it.role==='a')add('a',it.text);else{const d=document.createElement('div');d.className=it.role==='plan'?'plan':'stats';d.textContent=it.text;msgs.appendChild(d)}});msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='answer'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='answerDone'){const q=document.getElementById('stream');if(q)q.id=''}
 if(m.type==='proposal'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.textContent='✓ Approve & build in workspace';b.onclick=()=>{b.disabled=true;vscode.postMessage({type:'approve'})};d.appendChild(b);const n=document.createElement('span');n.textContent='  or reply to adjust the plan';d.appendChild(n);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
@@ -169,6 +175,9 @@ document.getElementById('attach').onclick=()=>vscode.postMessage({type:'attach'}
 function renderChips(items){chips.innerHTML='';items.forEach((it,i)=>{const sp=document.createElement('span');sp.className='chip '+it.kind;sp.textContent=(it.kind==='unsupported'?'⚠ ':'📎 ')+it.name;sp.title=it.note||'';const x=document.createElement('b');x.textContent=' ×';x.onclick=()=>vscode.postMessage({type:'detach',index:i});sp.appendChild(x);chips.appendChild(sp)})}
 document.getElementById('send').onclick=()=>{const v=inp.value.trim();if(!v)return;inp.value='';vscode.postMessage({type:'send',text:v})};
 inp.addEventListener('keydown',(e)=>{if(e.key==='Enter')document.getElementById('send').click()});
+const lvl=document.getElementById('level');
+lvl.onclick=()=>vscode.postMessage({type:'level'});
+function welcome(starters){const w=document.createElement('div');w.className='welcome';w.innerHTML='<b>What do you want to do?</b><br>Pick a starting point, or just describe it. Nothing is written to your project until you approve it.';const row=document.createElement('div');row.className='starters';starters.forEach((st)=>{const b=document.createElement('button');b.textContent=st.label;b.onclick=()=>{if(st.id==='form'){vscode.postMessage({type:'attach'})}inp.value=st.text;inp.focus()};row.appendChild(b)});w.appendChild(row);msgs.appendChild(w)}
 const ac=document.getElementById('ac');
 function atToken(){const m=/(?:^|\\s)@([\\w./\\\\-]*)$/.exec(inp.value);return m?m[1]:null}
 inp.addEventListener('input',()=>{const q=atToken();if(q===null){ac.style.display='none';return}vscode.postMessage({type:'mentionQuery',q:q})});
@@ -424,8 +433,39 @@ async function gatherContext(text, auto) {
     out.block = parts.join('\n\n');
     return out;
 }
+function getLevel() {
+    return vscode.workspace.getConfiguration('kusqo').get('experience', 'beginner');
+}
+const PLAIN_HINT = '[The user is a beginner: answer in plain language, define any technical term you must use, keep steps short and say what each file is for.]';
+const PLAN_INSTRUCTION = '[PLAN ONLY — do NOT write code or files yet. Propose in plain language: 1) what you will build and how the user will use it; ' +
+    '2) the stack and the files you will create; 3) what you need from the user (content, accounts, keys); ' +
+    '4) the questions that would change the result. End by asking the user to approve the plan.]';
+async function openWorkspacePreview(rel) {
+    const root = workspaceRoot();
+    if (!root)
+        return;
+    const rootUri = vscode.Uri.file(root);
+    const fileUri = vscode.Uri.file(`${root}/${rel}`);
+    const panel = vscode.window.createWebviewPanel('kusqoSitePreview', `Preview — ${rel}`, vscode.ViewColumn.Beside, {
+        enableScripts: true,
+        localResourceRoots: [rootUri],
+    });
+    const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
+    const base = `${panel.webview.asWebviewUri(vscode.Uri.file(`${root}/${dir}`))}/`;
+    let doc = Buffer.from(await vscode.workspace.fs.readFile(fileUri)).toString('utf8');
+    const tag = `<base href="${base}">`;
+    doc = /<head[^>]*>/i.test(doc) ? doc.replace(/<head[^>]*>/i, (m) => `${m}${tag}`) : `${tag}${doc}`;
+    panel.webview.html = doc;
+}
+const STARTERS = [
+    { id: 'site', label: 'Build a website', text: 'Build a modern website for ' },
+    { id: 'form', label: 'Digitize a paper form', text: 'Turn the attached form into a digital form with a records register and PDF download' },
+    { id: 'api', label: 'Create an API', text: 'Create a REST API with a database for ' },
+    { id: 'explain', label: 'Explain this project', text: '@codebase Explain what this project does and how it is organized' },
+    { id: 'fix', label: 'Check & fix errors', text: 'Run the checks on this project and explain any problem you find' },
+];
 const CHAT_HTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${CSS}</style></head>
-    <body><div id="hdr"><b>KUSQO</b><span id="modeLbl">chat · plan · review</span><button id="mode" title="Ask = answers only · Build = writes code">Mode: Ask</button><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
+    <body><div id="hdr"><b>KUSQO</b><span id="modeLbl">chat · plan · review</span><button id="level" title="Beginner: plain language, plan before building · Developer: concise, direct">Level: Beginner</button><button id="mode" title="Ask = answers only · Build = writes code">Mode: Ask</button><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
     <div id="msgs"></div><div id="chips"></div><div id="ac"></div><div id="bar"><button id="attach" title="Attach images or files — analyzed before anything is built">📎</button><input id="inp" placeholder="Ask, or describe what to build — @file for context…"/><button id="send">Send</button></div>
     <script>const vscode=acquireVsCodeApi();${JS}</script></body></html>`;
 class KusqoChatView {
@@ -488,7 +528,7 @@ function mountChat(context, webview) {
         const skipped = pending.filter((a) => a.kind === 'unsupported');
         pending = [];
         showChips();
-        if (!usable.length) {
+        if (!usable.length && skipped.length) {
             send({
                 type: 'error',
                 text: `None of the attached files could be read: ${skipped.map((a) => `${a.name} (${a.note})`).join('; ')}`,
@@ -499,7 +539,10 @@ function mountChat(context, webview) {
             send({ type: 'plan', text: `Skipped (unreadable): ${skipped.map((a) => a.name).join(', ')}` });
         const rules = await readRules();
         const rulesBlock = rules ? `\n\n[Project rules]\n${rules.slice(0, 1500)}` : '';
-        const prompt = `${text}\n\n${attachmentContext(usable)}\n\n${ANALYSIS_INSTRUCTION}${rulesBlock}`;
+        const gathered = await gatherContext(text, true);
+        const instruction = usable.length ? ANALYSIS_INSTRUCTION : PLAN_INSTRUCTION;
+        const beginner = getLevel() === 'beginner' ? `\n\n${PLAIN_HINT}` : '';
+        const prompt = [text, attachmentContext(usable), gathered.block, instruction].filter(Boolean).join('\n\n') + beginner + rulesBlock;
         const images = toImages(usable);
         const out = await streamChatRequest(await ensureToken(), {
             messages: [{ role: 'user', content: prompt }],
@@ -512,17 +555,7 @@ function mountChat(context, webview) {
         proposal = { instruction: text, items: usable, rules };
         send({ type: 'proposal' });
     }
-    async function buildApproved() {
-        if (!proposal)
-            return;
-        const p = proposal;
-        proposal = null;
-        send({ type: 'plan', text: 'Approved — generating the project…' });
-        const images = toImages(p.items);
-        const content = `Approved. Build exactly what was proposed for: ${p.instruction}\n` +
-            'Use the attached material as the source of truth.\n\n' +
-            attachmentContext(p.items) +
-            (p.rules ? `\n\n[Project rules]\n${p.rules.slice(0, 1500)}` : '');
+    async function generateAndReview(content, images) {
         const out = await streamChatRequest(await ensureToken(), {
             messages: [{ role: 'user', content }],
             mode: 'build',
@@ -545,6 +578,19 @@ function mountChat(context, webview) {
         else
             send({ type: 'error', text: 'No files returned' });
     }
+    async function buildApproved() {
+        if (!proposal)
+            return;
+        const p = proposal;
+        proposal = null;
+        send({ type: 'plan', text: 'Approved — generating the project…' });
+        const images = toImages(p.items);
+        const content = `Approved. Build exactly what was proposed for: ${p.instruction}\n` +
+            'Use the attached material as the source of truth.\n\n' +
+            attachmentContext(p.items) +
+            (p.rules ? `\n\n[Project rules]\n${p.rules.slice(0, 1500)}` : '');
+        await generateAndReview(content, images);
+    }
     async function applyReview(indexes) {
         const sel = indexes.map((i) => reviewFiles[i]).filter((f) => f && f.status !== 'same');
         if (!sel.length) {
@@ -556,6 +602,9 @@ function mountChat(context, webview) {
         const written = `${sel.length} file(s) written to the workspace`;
         send({ type: 'stats', text: written });
         remember({ role: 'stats', text: written });
+        const entry = sel.find((f) => f.path === 'index.html') ?? sel.find((f) => f.path.endsWith('/index.html'));
+        if (entry)
+            send({ type: 'previewOffer', path: entry.path });
         if (!vscode.workspace.getConfiguration('kusqo').get('autoVerify', true)) {
             send({ type: 'revertOffer' });
             return;
@@ -603,28 +652,23 @@ function mountChat(context, webview) {
         if (trustLevel === 0)
             promptText = `${promptText}\n\n[TRUST:READ — explain only, do NOT modify anything]`;
         if (chatMode === 'ask') {
+            if (getLevel() === 'beginner')
+                promptText += `\n\n${PLAIN_HINT}`;
             const out = await streamChatRequest(await ensureToken(), { messages: [{ role: 'user', content: promptText }], mode: 'ask' }, (acc) => send({ type: 'answer', text: acc }));
             send({ type: 'answer', text: out.html });
             send({ type: 'answerDone' });
             remember({ role: 'a', text: out.html });
             return;
         }
-        html = '';
-        const out = await streamChatRequest(await ensureToken(), { messages: [{ role: 'user', content: promptText }] }, (acc) => send({ type: 'delta', text: acc.slice(-4000) }));
-        html = out.html;
-        if (!html) {
-            send({ type: 'error', text: 'No content returned' });
-            return;
-        }
-        send({ type: 'done' });
-        remember({ role: 'a', text: 'Preview ready — run "KUSQO: Open preview"' });
-        const prev = vscode.window.createWebviewPanel('kusqoPreview', 'KUSQO Preview', vscode.ViewColumn.Beside, { enableScripts: true });
-        prev.webview.html = html;
+        send({ type: 'plan', text: 'Generating the project…' });
+        await generateAndReview(promptText, []);
     }
     webview.onDidReceiveMessage(async (msg) => {
         try {
-            if (msg.type === 'ready')
-                send({ type: 'replay', items: log });
+            if (msg.type === 'ready') {
+                send({ type: 'level', level: getLevel() });
+                send({ type: 'replay', items: log, starters: STARTERS });
+            }
             else if (msg.type === 'diff' && msg.index !== undefined)
                 await showProposedDiff(reviewFiles[msg.index]);
             else if (msg.type === 'applyReview')
@@ -635,6 +679,13 @@ function mountChat(context, webview) {
             }
             else if (msg.type === 'revert')
                 await revertLast();
+            else if (msg.type === 'level') {
+                const next = getLevel() === 'beginner' ? 'developer' : 'beginner';
+                await vscode.workspace.getConfiguration('kusqo').update('experience', next, vscode.ConfigurationTarget.Global);
+                send({ type: 'level', level: next });
+            }
+            else if (msg.type === 'openPreview' && msg.path)
+                await openWorkspacePreview(msg.path);
             else if (msg.type === 'mentionQuery') {
                 await ensureIndex();
                 send({ type: 'mentions', items: (0, context_1.completeMention)(msg.q ?? '', repoIndex.paths) });
@@ -657,7 +708,7 @@ function mountChat(context, webview) {
                 send({ type: 'user', text: shown });
                 remember({ role: 'u', text: shown });
                 proposal = null;
-                if (pending.length)
+                if (pending.length || (chatMode === 'build' && getLevel() === 'beginner'))
                     await analyze(msg.text);
                 else
                     await plainChat(msg.text);
@@ -670,7 +721,7 @@ function mountChat(context, webview) {
     chatControl.clear = () => {
         log = [];
         void context.workspaceState.update(LOG_KEY, []);
-        send({ type: 'replay', items: [] });
+        send({ type: 'replay', items: [], starters: STARTERS });
     };
     // expose current html for preview command
     void context.workspaceState.update('kusqo.lastHtml', '');
