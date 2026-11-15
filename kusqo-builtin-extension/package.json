@@ -2,7 +2,7 @@
   "name": "kusqo-ide",
   "displayName": "KUSQO IDE",
   "description": "KUSQO agent IDE â€” chat, preview and local execution connected to your KUSQO workspace",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "kusqo",
   "engines": {
     "vscode": "^1.85.0"
