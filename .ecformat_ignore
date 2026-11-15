@@ -4,6 +4,11 @@
 *.ico
 *.png
 *.xpm
+*.vsix
+
+# Vendored builtin extension — packaged artifact + compiled output, not source
+kusqo-builtin-extension/out/
+kusqo-builtin-extension/package-lock.json
 
 # File types with a mixed formatting which seems to be intentional.
 # Disabling only check for some properties (like indent_size) is currently not supported.
