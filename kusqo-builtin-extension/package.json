@@ -1,8 +1,8 @@
 {
   "name": "kusqo-ide",
   "displayName": "KUSQO IDE",
-  "description": "KUSQO agent IDE â€” chat, preview and local execution connected to your KUSQO workspace",
-  "version": "0.3.0",
+  "description": "KUSQO agent IDE \u00e2\u20ac\u201d chat, preview and local execution connected to your KUSQO workspace",
+  "version": "0.4.0",
   "publisher": "kusqo",
   "engines": {
     "vscode": "^1.85.0"
@@ -44,6 +44,22 @@
       {
         "command": "kusqo.memoryRules",
         "title": "KUSQO: Generate project memory rules (.kusqorules)"
+      },
+      {
+        "command": "kusqo.inlineEdit",
+        "title": "KUSQO: Inline Edit (Ctrl+K)"
+      },
+      {
+        "command": "kusqo.fixVerifyHeal",
+        "title": "KUSQO: Fix & Verify (self-healing)"
+      },
+      {
+        "command": "kusqo.verify",
+        "title": "KUSQO: Verify project (proof report)"
+      },
+      {
+        "command": "kusqo.proof",
+        "title": "KUSQO: Open last proof report"
       }
     ],
     "menus": {
@@ -89,7 +105,19 @@
           "description": "Workspace slug (empty = personal)"
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "kusqo.inlineEdit",
+        "key": "ctrl+k",
+        "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "kusqo.fixVerifyHeal",
+        "key": "ctrl+alt+v",
+        "when": ""
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p tsconfig.json",

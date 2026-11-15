@@ -124,7 +124,13 @@ const CSS = `body{margin:0;background:#06060c;color:#e4e4e7;font:13px system-ui;
 input{flex:1;background:#0b0b14;border:1px solid #26263a;border-radius:8px;color:#e4e4e7;padding:10px 12px;font:inherit;outline:none}
 button{background:linear-gradient(135deg,#6366f1,#a855f7);border:none;color:#fff;padding:10px 16px;border-radius:8px;cursor:pointer;font-weight:600}
 button:disabled{opacity:.4}
-.meta{font-family:monospace;font-size:11px;color:#71717a}`;
+.meta{font-family:monospace;font-size:11px;color:#71717a}
+#chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px 0}
+#chips:empty{display:none}
+.chip{background:#11111e;border:1px solid #26263a;border-radius:99px;padding:3px 10px;font-size:11px;color:#a5b4fc}
+.chip.unsupported{border-color:#92400e;color:#fbbf24}
+.chip b{cursor:pointer;color:#71717a}
+#attach{background:#0b0b14;border:1px solid #26263a;color:#a5b4fc;padding:10px 12px}`;
 /* eslint-disable no-useless-escape -- injected script text; the escapes are real regex in the child document */
 const JS = `const msgs=document.getElementById('msgs');const inp=document.getElementById('inp');
 const TRUST=['Read','Suggest','Auto'];let trust=1;
@@ -138,90 +144,275 @@ if(m.type==='plan'){const d=document.createElement('div');d.className='plan';d.i
 if(m.type==='stats'){const d=document.createElement('div');d.className='stats';d.textContent=m.text;msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='delta'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='done'){const s=document.getElementById('stream');if(s)s.id='';add('a','Preview ready — click Open preview')}
+if(m.type==='chips')renderChips(m.items);
+if(m.type==='answer'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
+if(m.type==='answerDone'){const q=document.getElementById('stream');if(q)q.id=''}
+if(m.type==='proposal'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.textContent='✓ Approve & build in workspace';b.onclick=()=>{b.disabled=true;vscode.postMessage({type:'approve'})};d.appendChild(b);const n=document.createElement('span');n.textContent='  or reply to adjust the plan';d.appendChild(n);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='error')add('a','⚠ '+m.text)});
+const chips=document.getElementById('chips');
+document.getElementById('attach').onclick=()=>vscode.postMessage({type:'attach'});
+function renderChips(items){chips.innerHTML='';items.forEach((it,i)=>{const sp=document.createElement('span');sp.className='chip '+it.kind;sp.textContent=(it.kind==='unsupported'?'⚠ ':'📎 ')+it.name;sp.title=it.note||'';const x=document.createElement('b');x.textContent=' ×';x.onclick=()=>vscode.postMessage({type:'detach',index:i});sp.appendChild(x);chips.appendChild(sp)})}
 document.getElementById('send').onclick=()=>{const v=inp.value.trim();if(!v)return;inp.value='';vscode.postMessage({type:'send',text:v})};
 inp.addEventListener('keydown',(e)=>{if(e.key==='Enter')document.getElementById('send').click()});`;
-/* eslint-enable no-useless-escape */
+const IMAGE_MIME = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+    gif: 'image/gif',
+};
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_TEXT_CHARS = 30_000;
+const MAX_ATTACHMENTS = 6;
+async function readAttachment(uri) {
+    const name = uri.path.split('/').pop() ?? 'file';
+    const ext = name.split('.').pop()?.toLowerCase() ?? '';
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    if (IMAGE_MIME[ext]) {
+        if (bytes.byteLength > MAX_IMAGE_BYTES)
+            return { name, kind: 'unsupported', note: 'Image larger than 2 MB — resize or crop it' };
+        return {
+            name,
+            kind: 'image',
+            url: `data:${IMAGE_MIME[ext]};base64,${Buffer.from(bytes).toString('base64')}`,
+        };
+    }
+    if (bytes.subarray(0, 8000).includes(0))
+        return {
+            name,
+            kind: 'unsupported',
+            note: `.${ext || 'binary'} files cannot be read yet — export to text/CSV/JSON or attach a photo/screenshot of it`,
+        };
+    const full = Buffer.from(bytes).toString('utf8');
+    const truncated = full.length > MAX_TEXT_CHARS;
+    return {
+        name,
+        kind: 'text',
+        text: truncated ? full.slice(0, MAX_TEXT_CHARS) : full,
+        note: truncated ? `Truncated to the first ${MAX_TEXT_CHARS} characters` : undefined,
+    };
+}
+function attachmentContext(items) {
+    const fence = '`'.repeat(3);
+    return items
+        .filter((a) => a.kind === 'text')
+        .map((a) => `[Attached file: ${a.name}${a.note ? ` — ${a.note}` : ''}]\n${fence}\n${a.text}\n${fence}`)
+        .join('\n\n');
+}
+const ANALYSIS_INSTRUCTION = '[ANALYSIS ONLY — do NOT write code or files yet. Study every attached image/file carefully ' +
+    '(multiple items are parts of one document or project). Report: 1) what it is and its purpose; ' +
+    '2) its structure — sections, fields, labels, options, tables, signatures, dates, data — marking ' +
+    'anything illegible or uncertain; 3) rules/validation you infer; 4) a concrete proposal of what ' +
+    'you would build or change in this workspace; 5) the questions you need answered. ' +
+    'End by asking the user to approve the plan.]';
+async function streamChatRequest(token, body, onDelta) {
+    const res = await fetch(`${apiBase()}/api/v1/builder/chat/stream`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok || !res.body)
+        throw new Error(`Stream ${res.status}`);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let acc = '';
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done)
+            break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() ?? '';
+        for (const p of parts) {
+            const line = p.split('\n').find((l) => l.startsWith('data:'));
+            if (!line)
+                continue;
+            let ev;
+            try {
+                ev = JSON.parse(line.slice(5).trim());
+            }
+            catch {
+                continue;
+            }
+            if (ev.type === 'error')
+                throw new Error(ev.message ?? 'Stream failed');
+            const delta = ev.text ?? ev.content;
+            if (ev.type === 'delta' && delta) {
+                acc += delta;
+                onDelta(acc);
+            }
+            if (ev.type === 'done')
+                return { html: ev.html ?? acc, files: ev.files };
+        }
+    }
+    throw new Error('Stream ended without a result');
+}
+async function applyFilesGuarded(context, files) {
+    const root = workspaceRoot();
+    if (!root)
+        throw new Error('Open a project folder first — nothing was written');
+    const safe = files
+        .map((f) => ({ path: f.path.replace(/^[\\/]+/, ''), content: f.content }))
+        .filter((f) => f.path && !f.path.split(/[\\/]/).includes('..'));
+    const snap = await snapshotFiles(root, safe.map((f) => f.path));
+    for (const f of safe) {
+        const uri = vscode.Uri.file(`${root}/${f.path}`);
+        const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+        if (dir)
+            await vscode.workspace.fs.createDirectory(vscode.Uri.file(`${root}/${dir}`));
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(f.content, 'utf8'));
+    }
+    const action = await vscode.window.showInformationMessage(`KUSQO: ${safe.length} file(s) written to the workspace`, 'Verify changes', 'Revert all', 'Keep');
+    if (action === 'Revert all') {
+        await restoreSnapshot(root, snap);
+        void vscode.window.showInformationMessage('KUSQO: changes reverted');
+    }
+    else if (action === 'Verify changes') {
+        const report = await verifyProject(context);
+        if (report && report.verdict !== 'verified') {
+            const rb = await vscode.window.showWarningMessage('Verification did not pass — revert the written files?', 'Revert', 'Keep anyway');
+            if (rb === 'Revert')
+                await restoreSnapshot(root, snap);
+        }
+    }
+}
 function agentPanel(context, token) {
     const panel = vscode.window.createWebviewPanel('kusqoAgent', 'KUSQO Agent', vscode.ViewColumn.Two, { enableScripts: true, retainContextWhenHidden: true });
     panel.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${CSS}</style></head>
     <body><div id="hdr"><b>KUSQO AGENT</b><span>chat · plan · review</span><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
-    <div id="msgs"></div><div id="bar"><input id="inp" placeholder="Describe what to build or fix — @file for context…"/><button id="send">Send</button></div>
+    <div id="msgs"></div><div id="chips"></div><div id="bar"><button id="attach" title="Attach images or files — analyzed before anything is built">📎</button><input id="inp" placeholder="Describe what to build or fix — @file for context…"/><button id="send">Send</button></div>
     <script>const vscode=acquireVsCodeApi();${JS}</script></body></html>`;
     let html = '';
     let trustLevel = 1; // 0 Read · 1 Suggest · 2 Auto
-    /* eslint-disable-next-line complexity -- legacy chat-panel state machine, needs the same split as above */
-    panel.webview.onDidReceiveMessage(async (msg) => {
-        if (msg.type === 'trust') {
-            trustLevel = msg.level ?? 1;
+    let pending = [];
+    let proposal = null;
+    const send = (m) => void panel.webview.postMessage(m);
+    const showChips = () => send({ type: 'chips', items: pending.map(({ name, kind, note }) => ({ name, kind, note })) });
+    const toImages = (items) => items.filter((a) => a.kind === 'image').map((a) => ({ url: a.url ?? '', name: a.name }));
+    async function attachFiles() {
+        const picked = await vscode.window.showOpenDialog({
+            canSelectMany: true,
+            openLabel: 'Attach to KUSQO',
+            title: 'Attach images or files (any format — unreadable ones are flagged)',
+        });
+        for (const uri of picked ?? []) {
+            if (pending.length >= MAX_ATTACHMENTS)
+                break;
+            try {
+                pending.push(await readAttachment(uri));
+            }
+            catch (err) {
+                pending.push({ name: uri.path.split('/').pop() ?? 'file', kind: 'unsupported', note: String(err) });
+            }
+        }
+        showChips();
+    }
+    async function analyze(text) {
+        const usable = pending.filter((a) => a.kind !== 'unsupported');
+        const skipped = pending.filter((a) => a.kind === 'unsupported');
+        pending = [];
+        showChips();
+        if (!usable.length) {
+            send({
+                type: 'error',
+                text: `None of the attached files could be read: ${skipped.map((a) => `${a.name} (${a.note})`).join('; ')}`,
+            });
             return;
         }
-        if (msg.type !== 'send' || !msg.text)
+        if (skipped.length)
+            send({ type: 'plan', text: `Skipped (unreadable): ${skipped.map((a) => a.name).join(', ')}` });
+        const rules = await readRules();
+        const rulesBlock = rules ? `\n\n[Project rules]\n${rules.slice(0, 1500)}` : '';
+        const prompt = `${text}\n\n${attachmentContext(usable)}\n\n${ANALYSIS_INSTRUCTION}${rulesBlock}`;
+        const images = toImages(usable);
+        const out = await streamChatRequest(token, {
+            messages: [{ role: 'user', content: prompt }],
+            mode: 'ask',
+            ...(images.length ? { attachments: images } : {}),
+        }, (acc) => send({ type: 'answer', text: acc }));
+        send({ type: 'answer', text: out.html });
+        send({ type: 'answerDone' });
+        proposal = { instruction: text, items: usable, rules };
+        send({ type: 'proposal' });
+    }
+    async function buildApproved() {
+        if (!proposal)
             return;
-        panel.webview.postMessage({ type: 'user', text: msg.text });
+        const p = proposal;
+        proposal = null;
+        send({ type: 'plan', text: 'Approved — generating the project…' });
+        const images = toImages(p.items);
+        const content = `Approved. Build exactly what was proposed for: ${p.instruction}\n` +
+            'Use the attached material as the source of truth.\n\n' +
+            attachmentContext(p.items) +
+            (p.rules ? `\n\n[Project rules]\n${p.rules.slice(0, 1500)}` : '');
+        const out = await streamChatRequest(token, {
+            messages: [{ role: 'user', content }],
+            mode: 'build',
+            projectType: 'module',
+            ...(images.length ? { attachments: images } : {}),
+        }, () => undefined);
+        if (out.files?.length) {
+            send({ type: 'stats', text: `${out.files.length} file(s) generated` });
+            await applyFilesGuarded(context, out.files);
+        }
+        else if (out.html) {
+            html = out.html;
+            send({ type: 'done' });
+        }
+        else
+            send({ type: 'error', text: 'No files returned' });
+    }
+    async function plainChat(text) {
+        const ed = vscode.window.activeTextEditor;
+        let promptText = text;
+        if (ed && /@file|@sel|@code/i.test(text)) {
+            const code = ed.selection.isEmpty
+                ? ed.document.getText().slice(0, 6000)
+                : ed.document.getText(ed.selection).slice(0, 6000);
+            promptText = `${text}\n\n[${vscode.workspace.asRelativePath(ed.document.uri)}]\n${code}`;
+        }
+        const rules = await readRules();
+        if (rules)
+            promptText += `\n\n[Project rules]\n${rules.slice(0, 1500)}`;
+        if (trustLevel === 0)
+            promptText = `${promptText}\n\n[TRUST:READ — explain only, do NOT modify anything]`;
+        html = '';
+        const out = await streamChatRequest(token, { messages: [{ role: 'user', content: promptText }] }, (acc) => send({ type: 'delta', text: acc.slice(-4000) }));
+        html = out.html;
+        if (!html) {
+            send({ type: 'error', text: 'No content returned' });
+            return;
+        }
+        send({ type: 'done' });
+        const prev = vscode.window.createWebviewPanel('kusqoPreview', 'KUSQO Preview', vscode.ViewColumn.Beside, { enableScripts: true });
+        prev.webview.html = html;
+    }
+    panel.webview.onDidReceiveMessage(async (msg) => {
         try {
-            // @-context: active file + selection ride along with every prompt (like @refs)
-            const ed = vscode.window.activeTextEditor;
-            let promptText = msg.text;
-            if (ed && /@file|@sel|@code/i.test(msg.text)) {
-                const code = ed.selection.isEmpty
-                    ? ed.document.getText().slice(0, 6000)
-                    : ed.document.getText(ed.selection).slice(0, 6000);
-                promptText = `${msg.text}\n\n[${vscode.workspace.asRelativePath(ed.document.uri)}]\n${code}`;
+            if (msg.type === 'trust')
+                trustLevel = msg.level ?? 1;
+            else if (msg.type === 'attach')
+                await attachFiles();
+            else if (msg.type === 'detach') {
+                pending = pending.filter((_, i) => i !== msg.index);
+                showChips();
             }
-            const rules = await readRules();
-            if (rules)
-                promptText += `\n\n[Project rules]\n${rules.slice(0, 1500)}`;
-            if (trustLevel === 0)
-                promptText = `${promptText}\n\n[TRUST:READ — explain only, do NOT modify anything]`;
-            // Streaming chat — real SSE to /builder/chat/stream
-            const res = await fetch(`${apiBase()}/api/v1/builder/chat/stream`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ messages: [{ role: 'user', content: promptText }] }),
-            });
-            if (!res.ok || !res.body)
-                throw new Error(`Stream ${res.status}`);
-            const reader = res.body.getReader();
-            const dec = new TextDecoder();
-            let buf = '';
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done)
-                    break;
-                buf += dec.decode(value, { stream: true });
-                const parts = buf.split('\n\n');
-                buf = parts.pop() ?? '';
-                for (const p of parts) {
-                    const line = p.split('\n').find((l) => l.startsWith('data:'));
-                    if (!line)
-                        continue;
-                    try {
-                        const ev = JSON.parse(line.slice(5).trim());
-                        if (ev.type === 'delta' && ev.content) {
-                            html = html + ev.content;
-                            panel.webview.postMessage({ type: 'delta', text: html.slice(-4000) });
-                        }
-                        if (ev.type === 'done' && ev.html) {
-                            html = ev.html;
-                            panel.webview.postMessage({ type: 'done' });
-                            const prev = vscode.window.createWebviewPanel('kusqoPreview', 'KUSQO Preview', vscode.ViewColumn.Beside, { enableScripts: true });
-                            prev.webview.html = html;
-                        }
-                    }
-                    catch {
-                        /* partial */
-                    }
-                }
+            else if (msg.type === 'approve')
+                await buildApproved();
+            else if (msg.type === 'send' && msg.text) {
+                const names = pending.map((a) => a.name).join(', ');
+                send({ type: 'user', text: names ? `${msg.text}\n📎 ${names}` : msg.text });
+                proposal = null;
+                if (pending.length)
+                    await analyze(msg.text);
+                else
+                    await plainChat(msg.text);
             }
-            if (!html)
-                panel.webview.postMessage({ type: 'error', text: 'No content returned' });
         }
         catch (err) {
-            panel.webview.postMessage({
-                type: 'error',
-                text: err instanceof Error ? err.message : String(err),
-            });
+            send({ type: 'error', text: err instanceof Error ? err.message : String(err) });
         }
     });
     context.subscriptions.push(panel);
