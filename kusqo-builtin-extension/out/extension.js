@@ -467,22 +467,105 @@ const PLAIN_HINT = '[The user is a beginner: answer in plain language, define an
 const PLAN_INSTRUCTION = '[PLAN ONLY — do NOT write code or files yet. Propose in plain language: 1) what you will build and how the user will use it; ' +
     '2) the stack and the files you will create; 3) what you need from the user (content, accounts, keys); ' +
     '4) the questions that would change the result. End by asking the user to approve the plan.]';
-async function openWorkspacePreview(rel) {
-    const root = workspaceRoot();
-    if (!root)
-        return;
-    const rootUri = vscode.Uri.file(root);
+let livePreview = null;
+const PREVIEW_ASSET_GLOB = '**/*.{html,htm,css,js,mjs,json,svg,png,jpg,jpeg,gif,webp,ico,woff,woff2,ttf}';
+async function readPreviewDoc(root, rel, base) {
     const fileUri = vscode.Uri.file(`${root}/${rel}`);
-    const panel = vscode.window.createWebviewPanel('kusqoSitePreview', `Preview — ${rel}`, vscode.ViewColumn.Beside, {
-        enableScripts: true,
-        localResourceRoots: [rootUri],
-    });
-    const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
-    const base = `${panel.webview.asWebviewUri(vscode.Uri.file(`${root}/${dir}`))}/`;
     let doc = Buffer.from(await vscode.workspace.fs.readFile(fileUri)).toString('utf8');
     const tag = `<base href="${base}">`;
     doc = /<head[^>]*>/i.test(doc) ? doc.replace(/<head[^>]*>/i, (m) => `${m}${tag}`) : `${tag}${doc}`;
-    panel.webview.html = doc;
+    return doc;
+}
+/** KUSQO-framed preview chrome: dark top bar, LIVE badge, device widths, in-iframe page. */
+function previewChromeHtml(rel) {
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+    html,body{margin:0;height:100%;background:#06060c;color:#e4e4e7;font:12px system-ui;overflow:hidden}
+    #bar{display:flex;align-items:center;gap:10px;height:38px;padding:0 12px;background:#0b0b14;border-bottom:1px solid #1e1e2e}
+    #bar b{font-size:11px;letter-spacing:.14em;color:#c7c9d1}
+    #path{font:11px ui-monospace,monospace;color:#818cf8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+    #live{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:.12em;color:#f472b6}
+    #dot{width:7px;height:7px;border-radius:50%;background:#f472b6;box-shadow:0 0 6px #f472b6}
+    .dev{background:none;border:1px solid #2a2a3d;border-radius:4px;color:#a1a1aa;font:10px system-ui;padding:3px 7px;cursor:pointer}
+    .dev.on{color:#fff;border-color:#818cf8;background:#1e1b4b}
+    #wrap{position:absolute;top:38px;left:0;right:0;bottom:0;display:flex;justify-content:center;background:#06060c}
+    #frame{border:0;width:100%;height:100%;background:#fff}
+    </style></head><body>
+    <div id="bar">
+      <svg width="16" height="16" viewBox="0 0 48 48" fill="none"><defs><linearGradient id="kqg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#818cf8"/><stop offset="55%" stop-color="#c084fc"/><stop offset="100%" stop-color="#f472b6"/></linearGradient></defs><polygon points="24,4 41,14 41,34 24,44 7,34 7,14" stroke="url(#kqg)" stroke-width="2.5" stroke-linejoin="round"/><path d="M18 15v18M18 24l10-9M18 24l10 9" stroke="url(#kqg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <b>KUSQO</b><span id="live"><span id="dot"></span>LIVE</span>
+      <span id="path">${rel}</span>
+      <button class="dev on" data-w="100%" title="Desktop width">Desktop</button>
+      <button class="dev" data-w="820px" title="Tablet width">820</button>
+      <button class="dev" data-w="390px" title="Phone width">390</button>
+    </div>
+    <div id="wrap"><iframe id="frame" sandbox="allow-scripts allow-same-origin allow-forms allow-modals"></iframe></div>
+    <script>
+      const frame=document.getElementById('frame'),dot=document.getElementById('dot');
+      for(const b of document.querySelectorAll('.dev'))b.onclick=()=>{
+        for(const o of document.querySelectorAll('.dev'))o.classList.remove('on');
+        b.classList.add('on');frame.style.width=b.dataset.w;frame.style.border=b.dataset.w==='100%'?'0':'1px solid #2a2a3d';
+      };
+      window.addEventListener('message',(e)=>{const m=e.data;if(m&&m.type==='doc'){frame.srcdoc=m.html;dot.style.background='#4ade80';dot.style.boxShadow='0 0 6px #4ade80';setTimeout(()=>{dot.style.background='#f472b6';dot.style.boxShadow='0 0 6px #f472b6'},600)}});
+    </script></body></html>`;
+}
+/** Open (or reveal/update) the live preview for a workspace HTML file and keep it hot on changes. */
+async function openLivePreview(rel) {
+    const root = workspaceRoot();
+    if (!root)
+        return;
+    const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
+    if (livePreview) {
+        livePreview.entry = rel;
+        const base = `${livePreview.panel.webview.asWebviewUri(vscode.Uri.file(`${root}/${dir}`))}/`;
+        try {
+            const doc = await readPreviewDoc(root, rel, base);
+            void livePreview.panel.webview.postMessage({ type: 'doc', html: doc });
+        }
+        catch {
+            void livePreview.panel.webview.postMessage({ type: 'doc', html: previewEmptyHtml(rel) });
+        }
+        livePreview.panel.reveal(vscode.ViewColumn.Beside);
+        return;
+    }
+    const panel = vscode.window.createWebviewPanel('kusqoSitePreview', `Preview — ${rel}`, vscode.ViewColumn.Beside, {
+        enableScripts: true,
+        localResourceRoots: [vscode.Uri.file(root)],
+    });
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, PREVIEW_ASSET_GLOB));
+    const lp = { panel, entry: rel, watcher, timer: null };
+    livePreview = lp;
+    panel.onDidDispose(() => {
+        if (livePreview === lp)
+            livePreview = null;
+        if (lp.timer)
+            clearTimeout(lp.timer);
+        watcher.dispose();
+    });
+    const push = async () => {
+        const d2 = lp.entry.includes('/') ? lp.entry.slice(0, lp.entry.lastIndexOf('/') + 1) : '';
+        const base = `${panel.webview.asWebviewUri(vscode.Uri.file(`${root}/${d2}`))}/`;
+        try {
+            const doc = await readPreviewDoc(root, lp.entry, base);
+            void panel.webview.postMessage({ type: 'doc', html: doc });
+        }
+        catch {
+            void panel.webview.postMessage({ type: 'doc', html: previewEmptyHtml(lp.entry) });
+        }
+    };
+    const schedule = () => {
+        if (lp.timer)
+            clearTimeout(lp.timer);
+        lp.timer = setTimeout(() => void push(), 350);
+    };
+    watcher.onDidChange(schedule);
+    watcher.onDidCreate(schedule);
+    watcher.onDidDelete(schedule);
+    panel.webview.html = previewChromeHtml(rel);
+    await push();
+}
+function previewEmptyHtml(rel) {
+    return `<!DOCTYPE html><html><body style="margin:0;background:#06060c;color:#e4e4e7;font:13px system-ui;display:flex;align-items:center;justify-content:center;height:100vh">
+  <div>${rel} is not on disk yet — it appears as soon as the agent writes it.</div></body></html>`;
 }
 const STARTERS = [
     { id: 'site', label: 'Build a website', text: 'Build a modern website for ' },
@@ -640,8 +723,12 @@ function mountChat(context, webview) {
         send({ type: 'stats', text: written });
         remember({ role: 'stats', text: written });
         const entry = sel.find((f) => f.path === 'index.html') ?? sel.find((f) => f.path.endsWith('/index.html'));
-        if (entry)
+        if (entry) {
             send({ type: 'previewOffer', path: entry.path });
+            if (vscode.workspace.getConfiguration('kusqo').get('livePreview', true)) {
+                void openLivePreview(entry.path);
+            }
+        }
         if (!vscode.workspace.getConfiguration('kusqo').get('autoVerify', true)) {
             send({ type: 'revertOffer' });
             return;
@@ -671,7 +758,8 @@ function mountChat(context, webview) {
             modal: true,
             detail: 'KUSQO will read the public pages of this site (respecting robots.txt) and describe its structure, modules and functions. ' +
                 'You confirm that you have the right to study it and that what you build from it is your responsibility. ' +
-                'Only structure and functions are reused — text, images and branding must be original.',
+                'Only structure and functions are reused — text, images and branding must be original. ' +
+                'Honest limits: static pages only — no JavaScript rendering, nothing behind a login or payment step, and the backend is only inferred; a heavy-JS (SPA) site can come out incomplete.',
         }, 'I confirm — study the site');
         if (!ok) {
             send({ type: 'plan', text: 'Site study cancelled — nothing was fetched' });
@@ -770,7 +858,7 @@ function mountChat(context, webview) {
                 send({ type: 'level', level: next });
             }
             else if (msg.type === 'openPreview' && msg.path)
-                await openWorkspacePreview(msg.path);
+                await openLivePreview(msg.path);
             else if (msg.type === 'studyPlan')
                 await planFromStudy();
             else if (msg.type === 'mentionQuery') {
@@ -826,7 +914,16 @@ function mountChat(context, webview) {
 }
 const chatControl = { clear: () => undefined, queue: () => undefined };
 const lastHtmlRef = { html: () => '' };
-function openPreview() {
+async function openPreview() {
+    const root = workspaceRoot();
+    if (root) {
+        const found = await vscode.workspace.findFiles('**/index.html', '**/{node_modules,dist,out,.git}/**', 1);
+        if (found.length) {
+            const rel = found[0].fsPath.slice(root.length + 1).split('\\').join('/');
+            await openLivePreview(rel);
+            return;
+        }
+    }
     const html = lastHtmlRef.html();
     const panel = vscode.window.createWebviewPanel('kusqoPreview', 'KUSQO Preview', vscode.ViewColumn.Beside, { enableScripts: true });
     panel.webview.html =

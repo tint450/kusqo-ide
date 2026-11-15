@@ -122,6 +122,11 @@
           "default": true,
           "description": "Run kusqo-verify automatically after applying generated changes."
         },
+        "kusqo.livePreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the live preview automatically when a generated website lands in the workspace, and refresh it as files change."
+        },
         "kusqo.autoContext": {
           "type": "boolean",
           "default": true,
