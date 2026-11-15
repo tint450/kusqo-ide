@@ -133,7 +133,8 @@ button:disabled{opacity:.4}
 #attach{background:#0b0b14;border:1px solid #26263a;color:#a5b4fc;padding:10px 12px}`;
 /* eslint-disable no-useless-escape -- injected script text; the escapes are real regex in the child document */
 const JS = `const msgs=document.getElementById('msgs');const inp=document.getElementById('inp');
-const TRUST=['Read','Suggest','Auto'];let trust=1;
+const TRUST=['Read','Suggest','Auto'];let trust=1;let mode='ask';
+document.getElementById('mode').onclick=()=>{mode=mode==='ask'?'build':'ask';document.getElementById('mode').textContent='Mode: '+(mode==='ask'?'Ask':'Build');vscode.postMessage({type:'mode',mode:mode})};
 document.getElementById('trust').onclick=()=>{trust=(trust+1)%3;document.getElementById('trust').textContent='Trust: '+TRUST[trust];vscode.postMessage({type:'trust',level:trust})};
 function md(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;')
 .replace(/\*\*([^*]+)\*\*/g,'<b>$1<\/b>')}
@@ -145,6 +146,7 @@ if(m.type==='stats'){const d=document.createElement('div');d.className='stats';d
 if(m.type==='delta'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='done'){const s=document.getElementById('stream');if(s)s.id='';add('a','Preview ready — click Open preview')}
 if(m.type==='chips')renderChips(m.items);
+if(m.type==='replay'){msgs.innerHTML='';m.items.forEach((it)=>{if(it.role==='u')add('u',it.text);else if(it.role==='a')add('a',it.text);else{const d=document.createElement('div');d.className=it.role==='plan'?'plan':'stats';d.textContent=it.text;msgs.appendChild(d)}});msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='answer'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='answerDone'){const q=document.getElementById('stream');if(q)q.id=''}
 if(m.type==='proposal'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.textContent='✓ Approve & build in workspace';b.onclick=()=>{b.disabled=true;vscode.postMessage({type:'approve'})};d.appendChild(b);const n=document.createElement('span');n.textContent='  or reply to adjust the plan';d.appendChild(n);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
@@ -153,7 +155,8 @@ const chips=document.getElementById('chips');
 document.getElementById('attach').onclick=()=>vscode.postMessage({type:'attach'});
 function renderChips(items){chips.innerHTML='';items.forEach((it,i)=>{const sp=document.createElement('span');sp.className='chip '+it.kind;sp.textContent=(it.kind==='unsupported'?'⚠ ':'📎 ')+it.name;sp.title=it.note||'';const x=document.createElement('b');x.textContent=' ×';x.onclick=()=>vscode.postMessage({type:'detach',index:i});sp.appendChild(x);chips.appendChild(sp)})}
 document.getElementById('send').onclick=()=>{const v=inp.value.trim();if(!v)return;inp.value='';vscode.postMessage({type:'send',text:v})};
-inp.addEventListener('keydown',(e)=>{if(e.key==='Enter')document.getElementById('send').click()});`;
+inp.addEventListener('keydown',(e)=>{if(e.key==='Enter')document.getElementById('send').click()});
+vscode.postMessage({type:'ready'});`;
 const IMAGE_MIME = {
     png: 'image/png',
     jpg: 'image/jpeg',
@@ -277,17 +280,43 @@ async function applyFilesGuarded(context, files) {
         }
     }
 }
-function agentPanel(context, token) {
-    const panel = vscode.window.createWebviewPanel('kusqoAgent', 'KUSQO Agent', vscode.ViewColumn.Two, { enableScripts: true, retainContextWhenHidden: true });
-    panel.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${CSS}</style></head>
-    <body><div id="hdr"><b>KUSQO AGENT</b><span>chat · plan · review</span><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
-    <div id="msgs"></div><div id="chips"></div><div id="bar"><button id="attach" title="Attach images or files — analyzed before anything is built">📎</button><input id="inp" placeholder="Describe what to build or fix — @file for context…"/><button id="send">Send</button></div>
+const CHAT_HTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${CSS}</style></head>
+    <body><div id="hdr"><b>KUSQO</b><span id="modeLbl">chat · plan · review</span><button id="mode" title="Ask = answers only · Build = writes code">Mode: Ask</button><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
+    <div id="msgs"></div><div id="chips"></div><div id="bar"><button id="attach" title="Attach images or files — analyzed before anything is built">📎</button><input id="inp" placeholder="Ask, or describe what to build — @file for context…"/><button id="send">Send</button></div>
     <script>const vscode=acquireVsCodeApi();${JS}</script></body></html>`;
+class KusqoChatView {
+    context;
+    static viewType = 'kusqo.agentView';
+    constructor(context) {
+        this.context = context;
+    }
+    resolveWebviewView(view) {
+        view.webview.options = { enableScripts: true };
+        view.webview.html = CHAT_HTML;
+        mountChat(this.context, view.webview);
+    }
+}
+function mountChat(context, webview) {
+    const LOG_KEY = 'kusqo.chatLog';
+    let log = context.workspaceState.get(LOG_KEY) ?? [];
+    const remember = (item) => {
+        log = [...log, item].slice(-200);
+        void context.workspaceState.update(LOG_KEY, log);
+    };
+    const ensureToken = async () => {
+        let t = await getToken(context);
+        if (!t)
+            t = await login(context);
+        if (!t)
+            throw new Error('Sign in to KUSQO first (Command Palette: KUSQO: Login)');
+        return t;
+    };
     let html = '';
     let trustLevel = 1; // 0 Read · 1 Suggest · 2 Auto
+    let chatMode = 'ask';
     let pending = [];
     let proposal = null;
-    const send = (m) => void panel.webview.postMessage(m);
+    const send = (m) => void webview.postMessage(m);
     const showChips = () => send({ type: 'chips', items: pending.map(({ name, kind, note }) => ({ name, kind, note })) });
     const toImages = (items) => items.filter((a) => a.kind === 'image').map((a) => ({ url: a.url ?? '', name: a.name }));
     async function attachFiles() {
@@ -326,13 +355,14 @@ function agentPanel(context, token) {
         const rulesBlock = rules ? `\n\n[Project rules]\n${rules.slice(0, 1500)}` : '';
         const prompt = `${text}\n\n${attachmentContext(usable)}\n\n${ANALYSIS_INSTRUCTION}${rulesBlock}`;
         const images = toImages(usable);
-        const out = await streamChatRequest(token, {
+        const out = await streamChatRequest(await ensureToken(), {
             messages: [{ role: 'user', content: prompt }],
             mode: 'ask',
             ...(images.length ? { attachments: images } : {}),
         }, (acc) => send({ type: 'answer', text: acc }));
         send({ type: 'answer', text: out.html });
         send({ type: 'answerDone' });
+        remember({ role: 'a', text: out.html });
         proposal = { instruction: text, items: usable, rules };
         send({ type: 'proposal' });
     }
@@ -347,7 +377,7 @@ function agentPanel(context, token) {
             'Use the attached material as the source of truth.\n\n' +
             attachmentContext(p.items) +
             (p.rules ? `\n\n[Project rules]\n${p.rules.slice(0, 1500)}` : '');
-        const out = await streamChatRequest(token, {
+        const out = await streamChatRequest(await ensureToken(), {
             messages: [{ role: 'user', content }],
             mode: 'build',
             projectType: 'module',
@@ -355,6 +385,7 @@ function agentPanel(context, token) {
         }, () => undefined);
         if (out.files?.length) {
             send({ type: 'stats', text: `${out.files.length} file(s) generated` });
+            remember({ role: 'stats', text: `${out.files.length} file(s) generated` });
             await applyFilesGuarded(context, out.files);
         }
         else if (out.html) {
@@ -378,20 +409,32 @@ function agentPanel(context, token) {
             promptText += `\n\n[Project rules]\n${rules.slice(0, 1500)}`;
         if (trustLevel === 0)
             promptText = `${promptText}\n\n[TRUST:READ — explain only, do NOT modify anything]`;
+        if (chatMode === 'ask') {
+            const out = await streamChatRequest(await ensureToken(), { messages: [{ role: 'user', content: promptText }], mode: 'ask' }, (acc) => send({ type: 'answer', text: acc }));
+            send({ type: 'answer', text: out.html });
+            send({ type: 'answerDone' });
+            remember({ role: 'a', text: out.html });
+            return;
+        }
         html = '';
-        const out = await streamChatRequest(token, { messages: [{ role: 'user', content: promptText }] }, (acc) => send({ type: 'delta', text: acc.slice(-4000) }));
+        const out = await streamChatRequest(await ensureToken(), { messages: [{ role: 'user', content: promptText }] }, (acc) => send({ type: 'delta', text: acc.slice(-4000) }));
         html = out.html;
         if (!html) {
             send({ type: 'error', text: 'No content returned' });
             return;
         }
         send({ type: 'done' });
+        remember({ role: 'a', text: 'Preview ready — run "KUSQO: Open preview"' });
         const prev = vscode.window.createWebviewPanel('kusqoPreview', 'KUSQO Preview', vscode.ViewColumn.Beside, { enableScripts: true });
         prev.webview.html = html;
     }
-    panel.webview.onDidReceiveMessage(async (msg) => {
+    webview.onDidReceiveMessage(async (msg) => {
         try {
-            if (msg.type === 'trust')
+            if (msg.type === 'ready')
+                send({ type: 'replay', items: log });
+            else if (msg.type === 'mode')
+                chatMode = msg.mode === 'build' ? 'build' : 'ask';
+            else if (msg.type === 'trust')
                 trustLevel = msg.level ?? 1;
             else if (msg.type === 'attach')
                 await attachFiles();
@@ -403,7 +446,9 @@ function agentPanel(context, token) {
                 await buildApproved();
             else if (msg.type === 'send' && msg.text) {
                 const names = pending.map((a) => a.name).join(', ');
-                send({ type: 'user', text: names ? `${msg.text}\n📎 ${names}` : msg.text });
+                const shown = names ? `${msg.text}\n📎 ${names}` : msg.text;
+                send({ type: 'user', text: shown });
+                remember({ role: 'u', text: shown });
                 proposal = null;
                 if (pending.length)
                     await analyze(msg.text);
@@ -415,11 +460,16 @@ function agentPanel(context, token) {
             send({ type: 'error', text: err instanceof Error ? err.message : String(err) });
         }
     });
-    context.subscriptions.push(panel);
+    chatControl.clear = () => {
+        log = [];
+        void context.workspaceState.update(LOG_KEY, []);
+        send({ type: 'replay', items: [] });
+    };
     // expose current html for preview command
     void context.workspaceState.update('kusqo.lastHtml', '');
     lastHtmlRef.html = () => html;
 }
+const chatControl = { clear: () => undefined };
 const lastHtmlRef = { html: () => '' };
 function openPreview() {
     const html = lastHtmlRef.html();
@@ -827,14 +877,9 @@ async function provideInlineCompletion(document, position, context, cancel) {
     }
 }
 function activate(context) {
-    context.subscriptions.push(vscode.commands.registerCommand('kusqo.login', () => void login(context)), vscode.commands.registerCommand('kusqo.logout', () => void logout(context)), vscode.commands.registerCommand('kusqo.inlineEdit', () => void inlineEdit(context)), vscode.commands.registerCommand('kusqo.fixVerifyHeal', () => void fixVerifySelfHeal(context)), vscode.commands.registerCommand('kusqo.chat', async () => {
-        const token = await getToken(context);
-        if (!token) {
-            void vscode.window.showWarningMessage('KUSQO: sign in first — the IDE requires an account');
-            return;
-        }
-        agentPanel(context, token);
-    }), vscode.commands.registerCommand('kusqo.fixVerify', () => fixVerifyLocal()), vscode.commands.registerCommand('kusqo.preview', () => openPreview()), vscode.commands.registerCommand('kusqo.agent', () => void runAgent(context)), vscode.commands.registerCommand('kusqo.verify', () => void verifyProject(context)), vscode.commands.registerCommand('kusqo.proof', () => {
+    context.subscriptions.push(vscode.commands.registerCommand('kusqo.login', () => void login(context)), vscode.commands.registerCommand('kusqo.logout', () => void logout(context)), vscode.commands.registerCommand('kusqo.inlineEdit', () => void inlineEdit(context)), vscode.commands.registerCommand('kusqo.fixVerifyHeal', () => void fixVerifySelfHeal(context)), vscode.window.registerWebviewViewProvider(KusqoChatView.viewType, new KusqoChatView(context), {
+        webviewOptions: { retainContextWhenHidden: true },
+    }), vscode.commands.registerCommand('kusqo.chat', () => vscode.commands.executeCommand('kusqo.agentView.focus')), vscode.commands.registerCommand('kusqo.newChat', () => chatControl.clear()), vscode.commands.registerCommand('kusqo.fixVerify', () => fixVerifyLocal()), vscode.commands.registerCommand('kusqo.preview', () => openPreview()), vscode.commands.registerCommand('kusqo.agent', () => void runAgent(context)), vscode.commands.registerCommand('kusqo.verify', () => void verifyProject(context)), vscode.commands.registerCommand('kusqo.proof', () => {
         const root = workspaceRoot();
         if (root)
             void openProofReport(root);
