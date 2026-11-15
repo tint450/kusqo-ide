@@ -130,6 +130,12 @@ button:disabled{opacity:.4}
 .chip{background:#11111e;border:1px solid #26263a;border-radius:99px;padding:3px 10px;font-size:11px;color:#a5b4fc}
 .chip.unsupported{border-color:#92400e;color:#fbbf24}
 .chip b{cursor:pointer;color:#71717a}
+.review{align-self:stretch;background:#11111e;border:1px solid #26263a;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+.rf{display:flex;gap:8px;align-items:center;font:11px monospace;color:#d4d4d8}
+.rf input{flex:none;padding:0}
+.rf a{margin-left:auto;color:#818cf8;cursor:pointer}
+.rbar{display:flex;gap:8px;margin-top:6px}
+.rbar .ghost{background:#0b0b14;border:1px solid #26263a;color:#a5b4fc}
 #attach{background:#0b0b14;border:1px solid #26263a;color:#a5b4fc;padding:10px 12px}`;
 /* eslint-disable no-useless-escape -- injected script text; the escapes are real regex in the child document */
 const JS = `const msgs=document.getElementById('msgs');const inp=document.getElementById('inp');
@@ -146,6 +152,8 @@ if(m.type==='stats'){const d=document.createElement('div');d.className='stats';d
 if(m.type==='delta'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='done'){const s=document.getElementById('stream');if(s)s.id='';add('a','Preview ready — click Open preview')}
 if(m.type==='chips')renderChips(m.items);
+if(m.type==='review'){const d=document.createElement('div');d.className='review';const h=document.createElement('div');h.textContent='Review proposed changes ('+m.files.length+' files) — nothing is written until you apply';h.style.color='#a5b4fc';d.appendChild(h);m.files.forEach((f,i)=>{const r=document.createElement('label');r.className='rf';const c=document.createElement('input');c.type='checkbox';c.checked=f.status!=='same';c.dataset.i=String(i);r.appendChild(c);const t=document.createElement('span');t.textContent=(f.status==='new'?'✚ ':f.status==='same'?'= ':'✎ ')+f.path+'  +'+f.added+' −'+f.removed;r.appendChild(t);const v=document.createElement('a');v.textContent='diff';v.onclick=(e)=>{e.preventDefault();vscode.postMessage({type:'diff',index:i})};r.appendChild(v);d.appendChild(r)});const bar=document.createElement('div');bar.className='rbar';const ap=document.createElement('button');ap.textContent='Apply selected';ap.onclick=()=>{const idx=[...d.querySelectorAll('input')].filter((x)=>x.checked).map((x)=>Number(x.dataset.i));ap.disabled=true;ds.disabled=true;vscode.postMessage({type:'applyReview',indexes:idx})};const ds=document.createElement('button');ds.className='ghost';ds.textContent='Discard';ds.onclick=()=>{ap.disabled=true;ds.disabled=true;vscode.postMessage({type:'discardReview'})};bar.appendChild(ap);bar.appendChild(ds);d.appendChild(bar);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
+if(m.type==='revertOffer'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.className='ghost';b.textContent='↩ Revert applied files';b.onclick=()=>{b.disabled=true;vscode.postMessage({type:'revert'})};d.appendChild(b);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='replay'){msgs.innerHTML='';m.items.forEach((it)=>{if(it.role==='u')add('u',it.text);else if(it.role==='a')add('a',it.text);else{const d=document.createElement('div');d.className=it.role==='plan'?'plan':'stats';d.textContent=it.text;msgs.appendChild(d)}});msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='answer'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='answerDone'){const q=document.getElementById('stream');if(q)q.id=''}
@@ -251,34 +259,81 @@ async function streamChatRequest(token, body, onDelta) {
     }
     throw new Error('Stream ended without a result');
 }
-async function applyFilesGuarded(context, files) {
+const PROPOSED_SCHEME = 'kusqo-proposed';
+const proposedDocs = new Map();
+class ProposedContent {
+    provideTextDocumentContent(uri) {
+        return proposedDocs.get(uri.path) ?? '';
+    }
+}
+function lineDiffStat(before, after) {
+    const b = new Set(before.split('\n'));
+    const a = new Set(after.split('\n'));
+    let added = 0;
+    let removed = 0;
+    for (const l of a)
+        if (!b.has(l))
+            added++;
+    for (const l of b)
+        if (!a.has(l))
+            removed++;
+    return { added, removed };
+}
+function safeRelPath(p) {
+    const rel = p.replace(/^[\\/]+/, '');
+    return rel && !rel.split(/[\\/]/).includes('..') ? rel : null;
+}
+async function buildReview(files) {
+    const root = workspaceRoot();
+    if (!root)
+        throw new Error('Open a project folder first — nothing can be reviewed or written');
+    const out = [];
+    for (const f of files) {
+        const rel = safeRelPath(f.path);
+        if (!rel)
+            continue;
+        let before = null;
+        try {
+            before = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.file(`${root}/${rel}`))).toString('utf8');
+        }
+        catch {
+            before = null;
+        }
+        out.push({
+            path: rel,
+            content: f.content,
+            status: before === null ? 'new' : before === f.content ? 'same' : 'modified',
+            ...(before === null
+                ? { added: f.content.split(/\r?\n/).length, removed: 0 }
+                : lineDiffStat(before, f.content)),
+        });
+    }
+    return out;
+}
+async function showProposedDiff(file) {
+    const root = workspaceRoot();
+    if (!root)
+        return;
+    proposedDocs.set(`/${file.path}`, file.content);
+    proposedDocs.set(`/empty/${file.path}`, '');
+    const right = vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: `/${file.path}` });
+    const left = file.status === 'new'
+        ? vscode.Uri.from({ scheme: PROPOSED_SCHEME, path: `/empty/${file.path}` })
+        : vscode.Uri.file(`${root}/${file.path}`);
+    await vscode.commands.executeCommand('vscode.diff', left, right, `${file.path} — proposed change`);
+}
+async function writeReviewed(files) {
     const root = workspaceRoot();
     if (!root)
         throw new Error('Open a project folder first — nothing was written');
-    const safe = files
-        .map((f) => ({ path: f.path.replace(/^[\\/]+/, ''), content: f.content }))
-        .filter((f) => f.path && !f.path.split(/[\\/]/).includes('..'));
-    const snap = await snapshotFiles(root, safe.map((f) => f.path));
-    for (const f of safe) {
-        const uri = vscode.Uri.file(`${root}/${f.path}`);
+    const snap = await snapshotFiles(root, files.map((f) => f.path));
+    for (const f of files) {
         const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
         if (dir)
             await vscode.workspace.fs.createDirectory(vscode.Uri.file(`${root}/${dir}`));
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(f.content, 'utf8'));
+        await vscode.workspace.fs.writeFile(vscode.Uri.file(`${root}/${f.path}`), Buffer.from(f.content, 'utf8'));
     }
-    const action = await vscode.window.showInformationMessage(`KUSQO: ${safe.length} file(s) written to the workspace`, 'Verify changes', 'Revert all', 'Keep');
-    if (action === 'Revert all') {
-        await restoreSnapshot(root, snap);
-        void vscode.window.showInformationMessage('KUSQO: changes reverted');
-    }
-    else if (action === 'Verify changes') {
-        const report = await verifyProject(context);
-        if (report && report.verdict !== 'verified') {
-            const rb = await vscode.window.showWarningMessage('Verification did not pass — revert the written files?', 'Revert', 'Keep anyway');
-            if (rb === 'Revert')
-                await restoreSnapshot(root, snap);
-        }
-    }
+    return snap;
 }
 const CHAT_HTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${CSS}</style></head>
     <body><div id="hdr"><b>KUSQO</b><span id="modeLbl">chat · plan · review</span><button id="mode" title="Ask = answers only · Build = writes code">Mode: Ask</button><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
@@ -314,6 +369,8 @@ function mountChat(context, webview) {
     let html = '';
     let trustLevel = 1; // 0 Read · 1 Suggest · 2 Auto
     let chatMode = 'ask';
+    let reviewFiles = [];
+    let lastSnap = null;
     let pending = [];
     let proposal = null;
     const send = (m) => void webview.postMessage(m);
@@ -386,7 +443,11 @@ function mountChat(context, webview) {
         if (out.files?.length) {
             send({ type: 'stats', text: `${out.files.length} file(s) generated` });
             remember({ role: 'stats', text: `${out.files.length} file(s) generated` });
-            await applyFilesGuarded(context, out.files);
+            reviewFiles = await buildReview(out.files);
+            send({
+                type: 'review',
+                files: reviewFiles.map(({ path, status, added, removed }) => ({ path, status, added, removed })),
+            });
         }
         else if (out.html) {
             html = out.html;
@@ -394,6 +455,39 @@ function mountChat(context, webview) {
         }
         else
             send({ type: 'error', text: 'No files returned' });
+    }
+    async function applyReview(indexes) {
+        const sel = indexes.map((i) => reviewFiles[i]).filter((f) => f && f.status !== 'same');
+        if (!sel.length) {
+            send({ type: 'error', text: 'No changed files selected — nothing was written' });
+            return;
+        }
+        lastSnap = await writeReviewed(sel);
+        reviewFiles = [];
+        const written = `${sel.length} file(s) written to the workspace`;
+        send({ type: 'stats', text: written });
+        remember({ role: 'stats', text: written });
+        if (!vscode.workspace.getConfiguration('kusqo').get('autoVerify', true)) {
+            send({ type: 'revertOffer' });
+            return;
+        }
+        send({ type: 'plan', text: 'Verifying the result…' });
+        const report = await verifyProject(context);
+        const verdict = report?.verdict ?? 'not run';
+        const line = verdict === 'verified' ? '✓ Verified — build, tests and checks passed' : `Verification: ${verdict}`;
+        send({ type: verdict === 'verified' ? 'stats' : 'plan', text: line });
+        remember({ role: verdict === 'verified' ? 'stats' : 'plan', text: line });
+        if (verdict !== 'verified')
+            send({ type: 'revertOffer' });
+    }
+    async function revertLast() {
+        const root = workspaceRoot();
+        if (!root || !lastSnap)
+            return;
+        await restoreSnapshot(root, lastSnap);
+        lastSnap = null;
+        send({ type: 'stats', text: 'Changes reverted' });
+        remember({ role: 'stats', text: 'Changes reverted' });
     }
     async function plainChat(text) {
         const ed = vscode.window.activeTextEditor;
@@ -432,6 +526,16 @@ function mountChat(context, webview) {
         try {
             if (msg.type === 'ready')
                 send({ type: 'replay', items: log });
+            else if (msg.type === 'diff' && msg.index !== undefined)
+                await showProposedDiff(reviewFiles[msg.index]);
+            else if (msg.type === 'applyReview')
+                await applyReview(msg.indexes ?? []);
+            else if (msg.type === 'discardReview') {
+                reviewFiles = [];
+                send({ type: 'plan', text: 'Proposed changes discarded — nothing was written' });
+            }
+            else if (msg.type === 'revert')
+                await revertLast();
             else if (msg.type === 'mode')
                 chatMode = msg.mode === 'build' ? 'build' : 'ask';
             else if (msg.type === 'trust')
@@ -879,7 +983,7 @@ async function provideInlineCompletion(document, position, context, cancel) {
 function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand('kusqo.login', () => void login(context)), vscode.commands.registerCommand('kusqo.logout', () => void logout(context)), vscode.commands.registerCommand('kusqo.inlineEdit', () => void inlineEdit(context)), vscode.commands.registerCommand('kusqo.fixVerifyHeal', () => void fixVerifySelfHeal(context)), vscode.window.registerWebviewViewProvider(KusqoChatView.viewType, new KusqoChatView(context), {
         webviewOptions: { retainContextWhenHidden: true },
-    }), vscode.commands.registerCommand('kusqo.chat', () => vscode.commands.executeCommand('kusqo.agentView.focus')), vscode.commands.registerCommand('kusqo.newChat', () => chatControl.clear()), vscode.commands.registerCommand('kusqo.fixVerify', () => fixVerifyLocal()), vscode.commands.registerCommand('kusqo.preview', () => openPreview()), vscode.commands.registerCommand('kusqo.agent', () => void runAgent(context)), vscode.commands.registerCommand('kusqo.verify', () => void verifyProject(context)), vscode.commands.registerCommand('kusqo.proof', () => {
+    }), vscode.commands.registerCommand('kusqo.chat', () => vscode.commands.executeCommand('kusqo.agentView.focus')), vscode.workspace.registerTextDocumentContentProvider(PROPOSED_SCHEME, new ProposedContent()), vscode.commands.registerCommand('kusqo.newChat', () => chatControl.clear()), vscode.commands.registerCommand('kusqo.fixVerify', () => fixVerifyLocal()), vscode.commands.registerCommand('kusqo.preview', () => openPreview()), vscode.commands.registerCommand('kusqo.agent', () => void runAgent(context)), vscode.commands.registerCommand('kusqo.verify', () => void verifyProject(context)), vscode.commands.registerCommand('kusqo.proof', () => {
         const root = workspaceRoot();
         if (root)
             void openProofReport(root);

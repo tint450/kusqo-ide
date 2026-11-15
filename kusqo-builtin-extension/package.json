@@ -2,7 +2,7 @@
   "name": "kusqo-ide",
   "displayName": "KUSQO IDE",
   "description": "KUSQO agent IDE â€” chat, preview and local execution connected to your KUSQO workspace",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "kusqo",
   "engines": {
     "vscode": "^1.85.0"
@@ -112,6 +112,11 @@
           "type": "string",
           "default": "",
           "description": "Workspace slug (empty = personal)"
+        },
+        "kusqo.autoVerify": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run kusqo-verify automatically after applying generated changes."
         }
       }
     },
