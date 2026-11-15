@@ -210,7 +210,7 @@ async function readAttachment(uri) {
         return {
             name,
             kind: 'unsupported',
-            note: `.${ext || 'binary'} files cannot be read yet — export to text/CSV/JSON or attach a photo/screenshot of it`,
+            note: `.${ext || 'binary'} files cannot be read yet — export to PDF/text/CSV/JSON or attach a photo/screenshot of it`,
         };
     const full = Buffer.from(bytes).toString('utf8');
     const truncated = full.length > MAX_TEXT_CHARS;
@@ -505,17 +505,27 @@ function mountChat(context, webview) {
     const send = (m) => void webview.postMessage(m);
     const showChips = () => send({ type: 'chips', items: pending.map(({ name, kind, note }) => ({ name, kind, note })) });
     const toImages = (items) => items.filter((a) => a.kind === 'image').map((a) => ({ url: a.url ?? '', name: a.name }));
+    async function readPdf(uri) {
+        const name = uri.path.split('/').pop() ?? 'file.pdf';
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        if (bytes.byteLength > 5 * 1024 * 1024)
+            return { name, kind: 'unsupported', note: 'PDF larger than 5 MB' };
+        const res = await post('/builder/attachments/extract', { name, data: Buffer.from(bytes).toString('base64') }, await ensureToken());
+        if (!res.data?.hasTextLayer)
+            return { name, kind: 'unsupported', note: 'No selectable text (scanned PDF) — attach a photo or screenshot of it instead' };
+        return { name, kind: 'text', text: res.data.text.slice(0, MAX_TEXT_CHARS) };
+    }
     async function attachFiles() {
         const picked = await vscode.window.showOpenDialog({
             canSelectMany: true,
             openLabel: 'Attach to KUSQO',
-            title: 'Attach images or files (any format — unreadable ones are flagged)',
+            title: 'Attach images, PDFs or text files (unreadable ones are flagged)',
         });
         for (const uri of picked ?? []) {
             if (pending.length >= MAX_ATTACHMENTS)
                 break;
             try {
-                pending.push(await readAttachment(uri));
+                pending.push(uri.path.toLowerCase().endsWith('.pdf') ? await readPdf(uri) : await readAttachment(uri));
             }
             catch (err) {
                 pending.push({ name: uri.path.split('/').pop() ?? 'file', kind: 'unsupported', note: String(err) });

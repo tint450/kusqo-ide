@@ -2,7 +2,7 @@
   "name": "kusqo-ide",
   "displayName": "KUSQO IDE",
   "description": "KUSQO IDE - chat, plans, verified builds and local execution connected to your KUSQO account",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "kusqo",
   "engines": {
     "vscode": "^1.85.0"
