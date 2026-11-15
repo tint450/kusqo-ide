@@ -678,7 +678,7 @@ function mountChat(context, webview) {
             return;
         }
         const token = await ensureToken();
-        const started = await post('/builder/site-study', { url, attested: true }, token);
+        const started = await post('/builder/site-study', { url, attested: true, lang: vscode.env.language }, token);
         send({ type: 'plan', text: `Studying ${url}…` });
         let lastProgress = '';
         for (let i = 0; i < 150; i++) {
