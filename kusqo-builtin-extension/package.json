@@ -1,8 +1,8 @@
 {
   "name": "kusqo-ide",
   "displayName": "KUSQO IDE",
-  "description": "KUSQO agent IDE â€” chat, preview and local execution connected to your KUSQO workspace",
-  "version": "0.8.0",
+  "description": "KUSQO IDE - chat, plans, verified builds and local execution connected to your KUSQO account",
+  "version": "0.9.0",
   "publisher": "kusqo",
   "engines": {
     "vscode": "^1.85.0"
@@ -87,7 +87,7 @@
         {
           "id": "kusqo",
           "title": "KUSQO",
-          "icon": "$(rocket)"
+          "icon": "media/kusqo.svg"
         }
       ]
     },
@@ -145,6 +145,54 @@
         "key": "ctrl+alt+v",
         "when": ""
       }
+    ],
+    "themes": [
+      {
+        "label": "KUSQO Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/kusqo-dark.json"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "kusqo.welcome",
+        "title": "Get started with KUSQO",
+        "description": "Ask, plan, build and verify - with every change under your control.",
+        "steps": [
+          {
+            "id": "signin",
+            "title": "Sign in",
+            "description": "Connect your KUSQO account.\n[Sign in](command:kusqo.login)",
+            "media": {
+              "markdown": "media/walkthrough/signin.md"
+            }
+          },
+          {
+            "id": "chat",
+            "title": "Ask first, build when ready",
+            "description": "Open the KUSQO chat.\n[Open chat](command:kusqo.chat)",
+            "media": {
+              "markdown": "media/walkthrough/chat.md"
+            }
+          },
+          {
+            "id": "attach",
+            "title": "Attach what you have",
+            "description": "Photos, screenshots and data files are analysed before anything is built.",
+            "media": {
+              "markdown": "media/walkthrough/attach.md"
+            }
+          },
+          {
+            "id": "verify",
+            "title": "Build verified",
+            "description": "Prove it works, revert in one click.\n[Verify project](command:kusqo.verify)",
+            "media": {
+              "markdown": "media/walkthrough/verify.md"
+            }
+          }
+        ]
+      }
     ]
   },
   "scripts": {
@@ -157,5 +205,6 @@
     "@types/vscode": "^1.85.0",
     "typescript": "^5.4.0",
     "vsce": "^2.15.0"
-  }
+  },
+  "icon": "media/icon.png"
 }

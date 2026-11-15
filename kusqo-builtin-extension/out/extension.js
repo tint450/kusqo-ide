@@ -108,8 +108,8 @@ async function logout(context) {
 }
 // ---------- Agent chat panel ----------
 const CSS = `body{margin:0;background:#06060c;color:#e4e4e7;font:13px system-ui;display:flex;flex-direction:column;height:100vh}
-#hdr{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #26263a;font-size:11px;color:#71717a}
-#hdr b{background:linear-gradient(90deg,#818cf8,#e879f9);-webkit-background-clip:text;background-clip:text;color:transparent;font-size:12px}
+#hdr{display:flex;align-items:center;gap:8px;font-family:ui-monospace,Consolas,monospace;padding:8px 12px;border-bottom:1px solid #26263a;font-size:11px;color:#71717a}
+#hdr b{letter-spacing:.25em;background:linear-gradient(90deg,#818cf8,#c084fc,#f472b6);-webkit-background-clip:text;background-clip:text;color:transparent;font-size:12px}
 #trust{margin-left:auto;background:#0b0b14;border:1px solid #26263a;border-radius:6px;color:#a5b4fc;padding:3px 8px;font-size:10px;cursor:pointer}
 #msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
 .m{padding:10px 12px;border-radius:10px;max-width:92%;white-space:pre-wrap;word-break:break-word;line-height:1.5}
@@ -465,7 +465,7 @@ const STARTERS = [
     { id: 'fix', label: 'Check & fix errors', text: 'Run the checks on this project and explain any problem you find' },
 ];
 const CHAT_HTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${CSS}</style></head>
-    <body><div id="hdr"><b>KUSQO</b><span id="modeLbl">chat · plan · review</span><button id="level" title="Beginner: plain language, plan before building · Developer: concise, direct">Level: Beginner</button><button id="mode" title="Ask = answers only · Build = writes code">Mode: Ask</button><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
+    <body><div id="hdr"><svg width="18" height="18" viewBox="0 0 48 48" fill="none"><defs><linearGradient id="kqg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#818cf8"/><stop offset="55%" stop-color="#c084fc"/><stop offset="100%" stop-color="#f472b6"/></linearGradient></defs><polygon points="24,4 41,14 41,34 24,44 7,34 7,14" stroke="url(#kqg)" stroke-width="2.5" stroke-linejoin="round"/><path d="M18 15v18M18 24l10-9M18 24l10 9" stroke="url(#kqg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><b>KUSQO</b><span id="modeLbl">build verified.</span><button id="level" title="Beginner: plain language, plan before building · Developer: concise, direct">Level: Beginner</button><button id="mode" title="Ask = answers only · Build = writes code">Mode: Ask</button><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
     <div id="msgs"></div><div id="chips"></div><div id="ac"></div><div id="bar"><button id="attach" title="Attach images or files — analyzed before anything is built">📎</button><input id="inp" placeholder="Ask, or describe what to build — @file for context…"/><button id="send">Send</button></div>
     <script>const vscode=acquireVsCodeApi();${JS}</script></body></html>`;
 class KusqoChatView {
@@ -1145,6 +1145,10 @@ function activate(context) {
             void vscode.window.showWarningMessage('Open a project folder first');
     }), vscode.commands.registerCommand('kusqo.memoryRules', () => void generateRules(context)), vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, { provideInlineCompletionItems: (d, p, _c, t) => provideInlineCompletion(d, p, context, t) }));
     watchRepo(context);
+    if (!context.globalState.get('kusqo.welcomed')) {
+        void context.globalState.update('kusqo.welcomed', true);
+        void vscode.commands.executeCommand('workbench.action.openWalkthrough', 'kusqo.kusqo-ide#kusqo.welcome', false);
+    }
     const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     status.text = '$(rocket) KUSQO';
     status.command = 'kusqo.chat';

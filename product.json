@@ -686,5 +686,10 @@
   "documentationUrl": "https://kusqo.com/docs",
   "releaseNotesUrl": "https://kusqo.com/releases",
   "supportUrl": "https://kusqo.com/support",
-  "webEndpointUrl": "https://kusqo.com/api"
+  "webEndpointUrl": "https://kusqo.com/api",
+  "configurationDefaults": {
+    "workbench.colorTheme": "KUSQO Dark",
+    "workbench.startupEditor": "welcomePage",
+    "telemetry.telemetryLevel": "off"
+  }
 }

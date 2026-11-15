@@ -13,6 +13,10 @@ cp -f LICENSE vscode/LICENSE.txt
 
 cd vscode || { echo "'vscode' dir not found"; exit 1; }
 
+# KUSQO: bundle the prebuilt built-in extension (chat, verify, theme, walkthrough)
+mkdir -p extensions/kusqo-ide
+cp -r ../kusqo-builtin-extension/package.json ../kusqo-builtin-extension/out ../kusqo-builtin-extension/media ../kusqo-builtin-extension/themes extensions/kusqo-ide/
+
 { set +x; } 2>/dev/null
 
 # {{{ product.json
