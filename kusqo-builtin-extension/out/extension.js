@@ -76,6 +76,9 @@ function studyMarkdown(url, r) {
     return [
         `**Site study — ${url}**`,
         `${r.summary ?? ''} (${r.siteType ?? 'unknown type'})`,
+        r.pages?.length
+            ? `**Pages studied (${r.pages.length})**\n${r.pages.map((pg) => `- ${pg.url} [${pg.type ?? 'page'}] — ${pg.purpose ?? ''}`).join('\n')}`
+            : '',
         `**Modules**\n${lines(r.modules, (m) => `${m.name} [${m.kind}] — ${m.description}`)}`,
         `**Functions**\n${lines(r.functions, (m) => `${m.name} [${m.kind}] — ${m.description}`)}`,
         `**Backend needed (inferred)**\n${lines(r.inferredBackend, (m) => `${m.capability} (${m.confidence}) — ${m.why}`)}`,
