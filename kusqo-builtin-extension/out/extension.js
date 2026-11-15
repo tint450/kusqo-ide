@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 /* eslint-disable max-lines, max-depth -- TODO(IDE): split extension.ts into modules (chat panel, agent loop, completion) */
 const vscode = __importStar(require("vscode"));
+const context_1 = require("./context");
 const child_process_1 = require("child_process");
 /**
  * KUSQO IDE — real agent extension.
@@ -136,6 +137,9 @@ button:disabled{opacity:.4}
 .rf a{margin-left:auto;color:#818cf8;cursor:pointer}
 .rbar{display:flex;gap:8px;margin-top:6px}
 .rbar .ghost{background:#0b0b14;border:1px solid #26263a;color:#a5b4fc}
+#ac{display:none;margin:0 12px;background:#11111e;border:1px solid #26263a;border-radius:8px;max-height:180px;overflow-y:auto}
+#ac div{padding:5px 10px;font:11px monospace;color:#d4d4d8;cursor:pointer}
+#ac div:hover{background:#26263a}
 #attach{background:#0b0b14;border:1px solid #26263a;color:#a5b4fc;padding:10px 12px}`;
 /* eslint-disable no-useless-escape -- injected script text; the escapes are real regex in the child document */
 const JS = `const msgs=document.getElementById('msgs');const inp=document.getElementById('inp');
@@ -143,7 +147,7 @@ const TRUST=['Read','Suggest','Auto'];let trust=1;let mode='ask';
 document.getElementById('mode').onclick=()=>{mode=mode==='ask'?'build':'ask';document.getElementById('mode').textContent='Mode: '+(mode==='ask'?'Ask':'Build');vscode.postMessage({type:'mode',mode:mode})};
 document.getElementById('trust').onclick=()=>{trust=(trust+1)%3;document.getElementById('trust').textContent='Trust: '+TRUST[trust];vscode.postMessage({type:'trust',level:trust})};
 function md(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;')
-.replace(/\*\*([^*]+)\*\*/g,'<b>$1<\/b>')}
+.replace(/\\*\\*([^*]+)\\*\\*/g,'<b>$1<\\/b>')}
 function add(cls,html){const d=document.createElement('div');d.className='m '+cls;d.innerHTML=cls==='u'?html:md(html);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;return d}
 window.addEventListener('message',(e)=>{const m=e.data;
 if(m.type==='user')add('u',m.text);
@@ -152,6 +156,7 @@ if(m.type==='stats'){const d=document.createElement('div');d.className='stats';d
 if(m.type==='delta'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='done'){const s=document.getElementById('stream');if(s)s.id='';add('a','Preview ready — click Open preview')}
 if(m.type==='chips')renderChips(m.items);
+if(m.type==='mentions')showMentions(m.items);
 if(m.type==='review'){const d=document.createElement('div');d.className='review';const h=document.createElement('div');h.textContent='Review proposed changes ('+m.files.length+' files) — nothing is written until you apply';h.style.color='#a5b4fc';d.appendChild(h);m.files.forEach((f,i)=>{const r=document.createElement('label');r.className='rf';const c=document.createElement('input');c.type='checkbox';c.checked=f.status!=='same';c.dataset.i=String(i);r.appendChild(c);const t=document.createElement('span');t.textContent=(f.status==='new'?'✚ ':f.status==='same'?'= ':'✎ ')+f.path+'  +'+f.added+' −'+f.removed;r.appendChild(t);const v=document.createElement('a');v.textContent='diff';v.onclick=(e)=>{e.preventDefault();vscode.postMessage({type:'diff',index:i})};r.appendChild(v);d.appendChild(r)});const bar=document.createElement('div');bar.className='rbar';const ap=document.createElement('button');ap.textContent='Apply selected';ap.onclick=()=>{const idx=[...d.querySelectorAll('input')].filter((x)=>x.checked).map((x)=>Number(x.dataset.i));ap.disabled=true;ds.disabled=true;vscode.postMessage({type:'applyReview',indexes:idx})};const ds=document.createElement('button');ds.className='ghost';ds.textContent='Discard';ds.onclick=()=>{ap.disabled=true;ds.disabled=true;vscode.postMessage({type:'discardReview'})};bar.appendChild(ap);bar.appendChild(ds);d.appendChild(bar);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='revertOffer'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.className='ghost';b.textContent='↩ Revert applied files';b.onclick=()=>{b.disabled=true;vscode.postMessage({type:'revert'})};d.appendChild(b);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='replay'){msgs.innerHTML='';m.items.forEach((it)=>{if(it.role==='u')add('u',it.text);else if(it.role==='a')add('a',it.text);else{const d=document.createElement('div');d.className=it.role==='plan'?'plan':'stats';d.textContent=it.text;msgs.appendChild(d)}});msgs.scrollTop=msgs.scrollHeight}
@@ -164,6 +169,10 @@ document.getElementById('attach').onclick=()=>vscode.postMessage({type:'attach'}
 function renderChips(items){chips.innerHTML='';items.forEach((it,i)=>{const sp=document.createElement('span');sp.className='chip '+it.kind;sp.textContent=(it.kind==='unsupported'?'⚠ ':'📎 ')+it.name;sp.title=it.note||'';const x=document.createElement('b');x.textContent=' ×';x.onclick=()=>vscode.postMessage({type:'detach',index:i});sp.appendChild(x);chips.appendChild(sp)})}
 document.getElementById('send').onclick=()=>{const v=inp.value.trim();if(!v)return;inp.value='';vscode.postMessage({type:'send',text:v})};
 inp.addEventListener('keydown',(e)=>{if(e.key==='Enter')document.getElementById('send').click()});
+const ac=document.getElementById('ac');
+function atToken(){const m=/(?:^|\\s)@([\\w./\\\\-]*)$/.exec(inp.value);return m?m[1]:null}
+inp.addEventListener('input',()=>{const q=atToken();if(q===null){ac.style.display='none';return}vscode.postMessage({type:'mentionQuery',q:q})});
+function showMentions(items){ac.innerHTML='';if(!items.length){ac.style.display='none';return}items.forEach((p)=>{const d=document.createElement('div');d.textContent=p;d.onclick=()=>{inp.value=inp.value.replace(/@[\\w./\\\\-]*$/,'@'+p+' ');ac.style.display='none';inp.focus()};ac.appendChild(d)});ac.style.display='block'}
 vscode.postMessage({type:'ready'});`;
 const IMAGE_MIME = {
     png: 'image/png',
@@ -335,9 +344,89 @@ async function writeReviewed(files) {
     }
     return snap;
 }
+// ---------- Repo context: local index + @-mentions + automatic retrieval ----------
+const INDEX_EXCLUDE = '**/{node_modules,.git,dist,out,build,.next,coverage,target,vendor,__pycache__,.venv}/**';
+const BINARY_EXT = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tar|exe|dll|so|woff2?|ttf|mp[34]|lock|vsix|map)$/i;
+const MAX_INDEX_FILES = 1500;
+const MAX_INDEX_BYTES = 200_000;
+const MAX_CONTEXT_CHARS = 30_000;
+const repoIndex = { entries: new Map(), paths: [], ready: false };
+function relPath(uri) {
+    return vscode.workspace.asRelativePath(uri, false).replace(/\\/g, '/');
+}
+async function ensureIndex() {
+    if (repoIndex.ready || !workspaceRoot())
+        return;
+    const uris = (await vscode.workspace.findFiles('**/*', INDEX_EXCLUDE, 4000)).filter((u) => !BINARY_EXT.test(u.path));
+    repoIndex.paths = uris.map(relPath).sort();
+    repoIndex.entries.clear();
+    for (const uri of uris.slice(0, MAX_INDEX_FILES)) {
+        try {
+            const bytes = await vscode.workspace.fs.readFile(uri);
+            if (bytes.byteLength > MAX_INDEX_BYTES || bytes.subarray(0, 4000).includes(0))
+                continue;
+            const rel = relPath(uri);
+            repoIndex.entries.set(rel, (0, context_1.buildEntry)(rel, Buffer.from(bytes).toString('utf8')));
+        }
+        catch {
+            /* unreadable — skip */
+        }
+    }
+    repoIndex.ready = true;
+}
+function watchRepo(context) {
+    const reset = () => {
+        repoIndex.ready = false;
+    };
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc) => {
+        if (BINARY_EXT.test(doc.uri.path))
+            return;
+        const rel = relPath(doc.uri);
+        if (repoIndex.ready && doc.getText().length <= MAX_INDEX_BYTES)
+            repoIndex.entries.set(rel, (0, context_1.buildEntry)(rel, doc.getText()));
+    }), vscode.workspace.onDidCreateFiles(reset), vscode.workspace.onDidDeleteFiles(reset), vscode.workspace.onDidRenameFiles(reset));
+}
+async function gatherContext(text, auto) {
+    const out = { block: '', used: [], missing: [] };
+    if (!workspaceRoot())
+        return out;
+    await ensureIndex();
+    const fence = '`'.repeat(3);
+    const parts = [];
+    let total = 0;
+    const add = (path, body) => {
+        if (out.used.includes(path) || total + body.length > MAX_CONTEXT_CHARS)
+            return;
+        total += body.length;
+        out.used.push(path);
+        parts.push(`[Context: ${path}]\n${fence}\n${body}\n${fence}`);
+    };
+    const mentions = (0, context_1.parseMentions)(text);
+    for (const m of mentions) {
+        const target = (0, context_1.resolveMention)(m, repoIndex.paths);
+        if (target.kind === 'none')
+            out.missing.push(m);
+        for (const p of target.paths) {
+            const entry = repoIndex.entries.get(p);
+            if (entry)
+                add(p, (0, context_1.snippetFor)(entry.text, text, 8000));
+        }
+    }
+    const wantsCodebase = /@codebase/i.test(text);
+    if (wantsCodebase || (auto && mentions.length === 0)) {
+        const files = [...repoIndex.entries.values()];
+        for (const r of (0, context_1.rank)(files, text, wantsCodebase ? 6 : 4)) {
+            const entry = repoIndex.entries.get(r.path);
+            if (entry)
+                add(r.path, (0, context_1.snippetFor)(entry.text, text, 2500));
+        }
+    }
+    out.block = parts.join('\n\n');
+    return out;
+}
 const CHAT_HTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${CSS}</style></head>
     <body><div id="hdr"><b>KUSQO</b><span id="modeLbl">chat · plan · review</span><button id="mode" title="Ask = answers only · Build = writes code">Mode: Ask</button><button id="trust" title="Agent autonomy">Trust: Suggest</button></div>
-    <div id="msgs"></div><div id="chips"></div><div id="bar"><button id="attach" title="Attach images or files — analyzed before anything is built">📎</button><input id="inp" placeholder="Ask, or describe what to build — @file for context…"/><button id="send">Send</button></div>
+    <div id="msgs"></div><div id="chips"></div><div id="ac"></div><div id="bar"><button id="attach" title="Attach images or files — analyzed before anything is built">📎</button><input id="inp" placeholder="Ask, or describe what to build — @file for context…"/><button id="send">Send</button></div>
     <script>const vscode=acquireVsCodeApi();${JS}</script></body></html>`;
 class KusqoChatView {
     context;
@@ -501,6 +590,16 @@ function mountChat(context, webview) {
         const rules = await readRules();
         if (rules)
             promptText += `\n\n[Project rules]\n${rules.slice(0, 1500)}`;
+        const auto = chatMode === 'ask' && vscode.workspace.getConfiguration('kusqo').get('autoContext', true);
+        const gathered = await gatherContext(text, auto);
+        if (gathered.block)
+            promptText += `\n\n${gathered.block}`;
+        if (gathered.used.length || gathered.missing.length) {
+            const note = (gathered.used.length ? `Context: ${gathered.used.join(', ')}` : '') +
+                (gathered.missing.length ? `${gathered.used.length ? ' · ' : ''}not found: ${gathered.missing.map((m) => `@${m}`).join(', ')}` : '');
+            send({ type: 'plan', text: note });
+            remember({ role: 'plan', text: note });
+        }
         if (trustLevel === 0)
             promptText = `${promptText}\n\n[TRUST:READ — explain only, do NOT modify anything]`;
         if (chatMode === 'ask') {
@@ -536,6 +635,10 @@ function mountChat(context, webview) {
             }
             else if (msg.type === 'revert')
                 await revertLast();
+            else if (msg.type === 'mentionQuery') {
+                await ensureIndex();
+                send({ type: 'mentions', items: (0, context_1.completeMention)(msg.q ?? '', repoIndex.paths) });
+            }
             else if (msg.type === 'mode')
                 chatMode = msg.mode === 'build' ? 'build' : 'ask';
             else if (msg.type === 'trust')
@@ -990,6 +1093,7 @@ function activate(context) {
         else
             void vscode.window.showWarningMessage('Open a project folder first');
     }), vscode.commands.registerCommand('kusqo.memoryRules', () => void generateRules(context)), vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, { provideInlineCompletionItems: (d, p, _c, t) => provideInlineCompletion(d, p, context, t) }));
+    watchRepo(context);
     const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     status.text = '$(rocket) KUSQO';
     status.command = 'kusqo.chat';

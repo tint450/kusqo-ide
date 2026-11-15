@@ -2,7 +2,7 @@
   "name": "kusqo-ide",
   "displayName": "KUSQO IDE",
   "description": "KUSQO agent IDE â€” chat, preview and local execution connected to your KUSQO workspace",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "kusqo",
   "engines": {
     "vscode": "^1.85.0"
@@ -117,6 +117,11 @@
           "type": "boolean",
           "default": true,
           "description": "Run kusqo-verify automatically after applying generated changes."
+        },
+        "kusqo.autoContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "In Ask mode, automatically add the most relevant workspace files (local lexical search) as context. Use @path or @codebase to control it explicitly."
         }
       }
     },
