@@ -64,6 +64,28 @@ async function post(path, body, token) {
         throw new Error(json.message ?? `API ${res.status}`);
     return json;
 }
+async function getJson(path, token) {
+    const res = await fetch(`${apiBase()}/api/v1${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    const json = (await res.json().catch(() => ({})));
+    if (!res.ok)
+        throw new Error(json.message ?? `API ${res.status}`);
+    return json;
+}
+function studyMarkdown(url, r) {
+    const lines = (items, f) => (items ?? []).map((x) => `- ${f(x)}`).join('\n');
+    return [
+        `**Site study — ${url}**`,
+        `${r.summary ?? ''} (${r.siteType ?? 'unknown type'})`,
+        `**Modules**\n${lines(r.modules, (m) => `${m.name} [${m.kind}] — ${m.description}`)}`,
+        `**Functions**\n${lines(r.functions, (m) => `${m.name} [${m.kind}] — ${m.description}`)}`,
+        `**Backend needed (inferred)**\n${lines(r.inferredBackend, (m) => `${m.capability} (${m.confidence}) — ${m.why}`)}`,
+        `**Opportunities**\n${lines(r.opportunities, (m) => `${m.feature} [${m.tier}] — ${m.reason}`)}`,
+        `**Not visible to this study**\n${(r.limits ?? []).map((l) => `- ${l}`).join('\n')}`,
+        r.openQuestions?.length ? `**Questions to decide**\n${r.openQuestions.map((q) => `- ${q}`).join('\n')}` : '',
+    ]
+        .filter(Boolean)
+        .join('\n\n');
+}
 async function getToken(context) {
     const token = context.globalState.get(TOKEN_KEY);
     if (token)
@@ -159,11 +181,13 @@ if(m.type==='stats'){const d=document.createElement('div');d.className='stats';d
 if(m.type==='delta'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='done'){const s=document.getElementById('stream');if(s)s.id='';add('a','Preview ready — click Open preview')}
 if(m.type==='chips')renderChips(m.items);
+if(m.type==='prefill'){inp.value=m.text;document.getElementById('send').click()}
 if(m.type==='level'){lvl.textContent='Level: '+(m.level==='beginner'?'Beginner':'Developer')}
 if(m.type==='welcome')welcome(m.starters);
 if(m.type==='previewOffer'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.textContent='▶ Open preview';b.onclick=()=>vscode.postMessage({type:'openPreview',path:m.path});d.appendChild(b);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='mentions')showMentions(m.items);
 if(m.type==='review'){const d=document.createElement('div');d.className='review';const h=document.createElement('div');h.textContent='Review proposed changes ('+m.files.length+' files) — nothing is written until you apply';h.style.color='#a5b4fc';d.appendChild(h);m.files.forEach((f,i)=>{const r=document.createElement('label');r.className='rf';const c=document.createElement('input');c.type='checkbox';c.checked=f.status!=='same';c.dataset.i=String(i);r.appendChild(c);const t=document.createElement('span');t.textContent=(f.status==='new'?'✚ ':f.status==='same'?'= ':'✎ ')+f.path+'  +'+f.added+' −'+f.removed;r.appendChild(t);const v=document.createElement('a');v.textContent='diff';v.onclick=(e)=>{e.preventDefault();vscode.postMessage({type:'diff',index:i})};r.appendChild(v);d.appendChild(r)});const bar=document.createElement('div');bar.className='rbar';const ap=document.createElement('button');ap.textContent='Apply selected';ap.onclick=()=>{const idx=[...d.querySelectorAll('input')].filter((x)=>x.checked).map((x)=>Number(x.dataset.i));ap.disabled=true;ds.disabled=true;vscode.postMessage({type:'applyReview',indexes:idx})};const ds=document.createElement('button');ds.className='ghost';ds.textContent='Discard';ds.onclick=()=>{ap.disabled=true;ds.disabled=true;vscode.postMessage({type:'discardReview'})};bar.appendChild(ap);bar.appendChild(ds);d.appendChild(bar);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
+if(m.type==='studyOffer'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.textContent='▶ Plan my original version';b.onclick=()=>{b.disabled=true;vscode.postMessage({type:'studyPlan'})};d.appendChild(b);const n=document.createElement('span');n.textContent='  structure and functions only — content and branding stay original';d.appendChild(n);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='revertOffer'){const d=document.createElement('div');d.className='plan';const b=document.createElement('button');b.className='ghost';b.textContent='↩ Revert applied files';b.onclick=()=>{b.disabled=true;vscode.postMessage({type:'revert'})};d.appendChild(b);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='replay'){msgs.innerHTML='';if(!m.items.length&&m.starters)welcome(m.starters);m.items.forEach((it)=>{if(it.role==='u')add('u',it.text);else if(it.role==='a')add('a',it.text);else{const d=document.createElement('div');d.className=it.role==='plan'?'plan':'stats';d.textContent=it.text;msgs.appendChild(d)}});msgs.scrollTop=msgs.scrollHeight}
 if(m.type==='answer'){const l=document.getElementById('stream')||add('a','');l.id='stream';l.innerHTML=md(m.text);msgs.scrollTop=msgs.scrollHeight}
@@ -637,6 +661,54 @@ function mountChat(context, webview) {
         send({ type: 'stats', text: 'Changes reverted' });
         remember({ role: 'stats', text: 'Changes reverted' });
     }
+    let study = null;
+    async function runStudy(rawUrl) {
+        const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+        const ok = await vscode.window.showWarningMessage(`Study ${url}?`, {
+            modal: true,
+            detail: 'KUSQO will read the public pages of this site (respecting robots.txt) and describe its structure, modules and functions. ' +
+                'You confirm that you have the right to study it and that what you build from it is your responsibility. ' +
+                'Only structure and functions are reused — text, images and branding must be original.',
+        }, 'I confirm — study the site');
+        if (!ok) {
+            send({ type: 'plan', text: 'Site study cancelled — nothing was fetched' });
+            return;
+        }
+        const token = await ensureToken();
+        const started = await post('/builder/site-study', { url, attested: true }, token);
+        send({ type: 'plan', text: `Studying ${url}…` });
+        let lastProgress = '';
+        for (let i = 0; i < 150; i++) {
+            await new Promise((r) => setTimeout(r, i === 0 ? 1200 : 2500));
+            const res = await getJson(`/builder/site-study/${started.data.id}`, token);
+            const d = res.data;
+            if (d.progress && d.progress !== lastProgress) {
+                lastProgress = d.progress;
+                send({ type: 'plan', text: d.progress });
+            }
+            if (d.status === 'failed')
+                throw new Error(d.error ?? 'Site study failed');
+            if (d.status === 'done' && d.report) {
+                const md = studyMarkdown(url, d.report);
+                study = { url, markdown: md };
+                send({ type: 'answer', text: md });
+                send({ type: 'answerDone' });
+                remember({ role: 'a', text: md });
+                send({ type: 'studyOffer' });
+                return;
+            }
+        }
+        throw new Error('The site study is taking too long — check back later');
+    }
+    async function planFromStudy() {
+        if (!study)
+            return;
+        const text = `Plan an ORIGINAL product similar in structure and function to ${study.url}. Reuse modules and flows, never its text, images or branding.`;
+        pending = [{ name: 'site-study.md', kind: 'text', text: study.markdown }];
+        send({ type: 'user', text });
+        remember({ role: 'u', text });
+        await analyze(text);
+    }
     async function plainChat(text) {
         const ed = vscode.window.activeTextEditor;
         let promptText = text;
@@ -696,6 +768,8 @@ function mountChat(context, webview) {
             }
             else if (msg.type === 'openPreview' && msg.path)
                 await openWorkspacePreview(msg.path);
+            else if (msg.type === 'studyPlan')
+                await planFromStudy();
             else if (msg.type === 'mentionQuery') {
                 await ensureIndex();
                 send({ type: 'mentions', items: (0, context_1.completeMention)(msg.q ?? '', repoIndex.paths) });
@@ -713,6 +787,13 @@ function mountChat(context, webview) {
             else if (msg.type === 'approve')
                 await buildApproved();
             else if (msg.type === 'send' && msg.text) {
+                const cmd = /^\/study\s+(\S+)/i.exec(msg.text);
+                if (cmd) {
+                    send({ type: 'user', text: msg.text });
+                    remember({ role: 'u', text: msg.text });
+                    await runStudy(cmd[1]);
+                    return;
+                }
                 const names = pending.map((a) => a.name).join(', ');
                 const shown = names ? `${msg.text}\n📎 ${names}` : msg.text;
                 send({ type: 'user', text: shown });
@@ -728,6 +809,9 @@ function mountChat(context, webview) {
             send({ type: 'error', text: err instanceof Error ? err.message : String(err) });
         }
     });
+    chatControl.queue = (text) => {
+        void webview.postMessage({ type: 'prefill', text });
+    };
     chatControl.clear = () => {
         log = [];
         void context.workspaceState.update(LOG_KEY, []);
@@ -737,7 +821,7 @@ function mountChat(context, webview) {
     void context.workspaceState.update('kusqo.lastHtml', '');
     lastHtmlRef.html = () => html;
 }
-const chatControl = { clear: () => undefined };
+const chatControl = { clear: () => undefined, queue: () => undefined };
 const lastHtmlRef = { html: () => '' };
 function openPreview() {
     const html = lastHtmlRef.html();
@@ -1147,7 +1231,13 @@ async function provideInlineCompletion(document, position, context, cancel) {
 function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand('kusqo.login', () => void login(context)), vscode.commands.registerCommand('kusqo.logout', () => void logout(context)), vscode.commands.registerCommand('kusqo.inlineEdit', () => void inlineEdit(context)), vscode.commands.registerCommand('kusqo.fixVerifyHeal', () => void fixVerifySelfHeal(context)), vscode.window.registerWebviewViewProvider(KusqoChatView.viewType, new KusqoChatView(context), {
         webviewOptions: { retainContextWhenHidden: true },
-    }), vscode.commands.registerCommand('kusqo.chat', () => vscode.commands.executeCommand('kusqo.agentView.focus')), vscode.workspace.registerTextDocumentContentProvider(PROPOSED_SCHEME, new ProposedContent()), vscode.commands.registerCommand('kusqo.newChat', () => chatControl.clear()), vscode.commands.registerCommand('kusqo.fixVerify', () => fixVerifyLocal()), vscode.commands.registerCommand('kusqo.preview', () => openPreview()), vscode.commands.registerCommand('kusqo.agent', () => void runAgent(context)), vscode.commands.registerCommand('kusqo.verify', () => void verifyProject(context)), vscode.commands.registerCommand('kusqo.proof', () => {
+    }), vscode.commands.registerCommand('kusqo.chat', () => vscode.commands.executeCommand('kusqo.agentView.focus')), vscode.workspace.registerTextDocumentContentProvider(PROPOSED_SCHEME, new ProposedContent()), vscode.commands.registerCommand('kusqo.newChat', () => chatControl.clear()), vscode.commands.registerCommand('kusqo.studySite', async () => {
+        const url = await vscode.window.showInputBox({ prompt: 'Website to study (structure and functions only)', placeHolder: 'https://example.com', ignoreFocusOut: true });
+        if (!url)
+            return;
+        await vscode.commands.executeCommand('kusqo.agentView.focus');
+        chatControl.queue(`/study ${url.trim()}`);
+    }), vscode.commands.registerCommand('kusqo.fixVerify', () => fixVerifyLocal()), vscode.commands.registerCommand('kusqo.preview', () => openPreview()), vscode.commands.registerCommand('kusqo.agent', () => void runAgent(context)), vscode.commands.registerCommand('kusqo.verify', () => void verifyProject(context)), vscode.commands.registerCommand('kusqo.proof', () => {
         const root = workspaceRoot();
         if (root)
             void openProofReport(root);
